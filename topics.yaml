@@ -1,0 +1,149 @@
+# Et al. — starter pack: cardio interventional
+# Edit freely from the Topics tab in-app.
+
+topics:
+  ACS:
+    keywords:
+      - acute coronary syndrome
+      - stemi
+      - nstemi
+      - nste-acs
+      - unstable angina
+      - myocardial infarction
+      - type 1 mi
+  Antithrombotics:
+    keywords:
+      - antiplatelet
+      - dual antiplatelet
+      - dapt
+      - anticoagulant
+      - doac
+      - aspirin
+      - clopidogrel
+      - ticagrelor
+      - prasugrel
+      - rivaroxaban
+      - apixaban
+  Bifurcation:
+    keywords:
+      - bifurcation
+      - dk crush
+      - dk-crush
+      - two-stent
+      - provisional stenting
+      - nano-crush
+      - kissing balloon
+      - side branch
+  CAD-Stable:
+    keywords:
+      - stable coronary
+      - chronic coronary
+      - stable angina
+      - chronic coronary syndrome
+      - stable cad
+      - ischemia trial
+      - courage trial
+  Calcium:
+    keywords:
+      - calcified
+      - calcium nodule
+      - atherectomy
+      - rotational atherectomy
+      - rotablation
+      - orbital atherectomy
+      - intravascular lithotripsy
+      - ivl
+      - shockwave
+  CTO:
+    keywords:
+      - chronic total occlusion
+      - cto pci
+      - retrograde approach
+      - antegrade dissection
+      - j-cto
+  FFR:
+    keywords:
+      - ffr
+      - ifr
+      - fractional flow reserve
+      - instantaneous wave-free
+      - coronary physiology
+      - qfr
+      - quantitative flow ratio
+  IVUS:
+    keywords:
+      - ivus
+      - intravascular ultrasound
+  LAA:
+    keywords:
+      - left atrial appendage
+      - watchman
+      - laao
+      - amulet
+      - appendage occlusion
+  LeftMain:
+    keywords:
+      - left main
+      - left main coronary
+      - lmca
+      - unprotected left main
+      - excel trial
+      - noble trial
+  MV:
+    keywords:
+      - mitral valve
+      - mitraclip
+      - transcatheter mitral
+      - tmvr
+      - tmvi
+      - tendyne
+  OCT:
+    keywords:
+      - oct
+      - optical coherence tomography
+  PCI:
+    keywords:
+      - percutaneous coronary intervention
+      - pci
+      - drug-eluting stent
+      - stent
+      - des
+      - bms
+      - bioresorbable
+  Radial:
+    keywords:
+      - radial access
+      - transradial
+      - distal radial
+      - snuffbox
+  Renal:
+    keywords:
+      - contrast nephropathy
+      - contrast-induced
+      - contrast induced
+      - acute kidney injury
+      - ci-aki
+      - renoprotection
+  Shock:
+    keywords:
+      - cardiogenic shock
+      - impella
+      - va-ecmo
+      - mechanical circulatory support
+      - mcs
+  TAVR:
+    keywords:
+      - tavr
+      - tavi
+      - transcatheter aortic valve
+      - aortic valve replacement
+      - sapien
+      - evolut
+      - corevalve
+  Women:
+    keywords:
+      - sex differences
+      - sex-based outcomes
+      - women undergoing
+      - female patients
+      - gender differences
