@@ -7,7 +7,7 @@ Local PDF library manager for clinical research. Drop a PDF, it pulls metadata f
 ## Quick start
 
 ```bash
-cd cardio_library
+cd article-organizer
 python -m venv .venv && source .venv/bin/activate    # macOS/Linux
 # .venv\Scripts\activate                              # Windows
 pip install -r requirements.txt

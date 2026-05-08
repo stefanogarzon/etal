@@ -45,7 +45,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DOI_REGEX = re.compile(r"10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+", re.IGNORECASE)
 CROSSREF_URL = "https://api.crossref.org/works/{doi}"
 
-logger = logging.getLogger("cardio_library")
+logger = logging.getLogger("etal")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Set by app.py once the webview window exists
@@ -376,7 +376,7 @@ def post_setup(req: SetupRequest) -> dict:
 # ----- Routes: ingestion -----
 
 # Tempdir for staged uploads awaiting confirmation
-STAGING = Path(tempfile.gettempdir()) / "cardio_library_staging"
+STAGING = Path(tempfile.gettempdir()) / "etal_staging"
 STAGING.mkdir(exist_ok=True)
 
 
