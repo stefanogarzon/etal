@@ -1,6 +1,6 @@
-# Cardio Library — project context
+# Et al. — project context
 
-Local PDF library manager for clinical research articles. Drop a PDF → CrossRef metadata → topic suggestion → file renamed and indexed.
+*Local PDF library manager. Your papers and everyone else's.*
 
 ## Stack
 
@@ -30,7 +30,7 @@ README.md
 3. **No LLM.** DOI extraction + CrossRef + keyword-based topic matching. User confirms every classification.
 4. **Topic = folder.** Renaming a topic moves the folder and updates DB rows. Deleting a topic with articles is blocked.
 5. **Duplicates by DOI.** Skipped silently (with toast notification) on save. Enforced both at app level and via UNIQUE constraint.
-6. **Library path is configurable.** Stored in `~/.config/cardio-library/config.json`. First run shows a folder picker.
+6. **Library path is configurable.** Stored in `~/.config/etal/config.json`. First run shows a folder picker.
 
 ## Filename convention
 

@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Et al.</title>
+<style>
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --border: #e3e3df;
+  --text: #1a1a1a;
+  --muted: #6b6b6b;
+  --accent: #b34a2a;
+  --accent-soft: #f3e3dc;
+  --hover: #f0efeb;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px;
+}
+button, input, select, textarea {
+  font-family: inherit; font-size: 14px;
+}
+button {
+  background: var(--text); color: white; border: none;
+  padding: 7px 14px; border-radius: 6px; cursor: pointer;
+}
+button:hover { opacity: 0.85; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+button.danger { background: #b34a2a; }
+input[type=text], input[type=number], select, textarea {
+  background: white; border: 1px solid var(--border);
+  padding: 7px 10px; border-radius: 6px; width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+
+/* Layout */
+.app { display: flex; flex-direction: column; height: 100vh; }
+.tabs { display: flex; gap: 4px; padding: 8px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--border); }
+.tab { padding: 6px 14px; border-radius: 6px; cursor: pointer; color: var(--muted); }
+.tab.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.tab:hover:not(.active) { background: var(--hover); }
+.view { flex: 1; overflow: hidden; display: none; }
+.view.active { display: flex; }
+
+/* Setup screen */
+.setup { width: 100%; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px; padding: 40px; }
+.setup h1 { margin: 0; }
+.setup p { color: var(--muted); max-width: 500px; text-align: center; }
+.path-display { font-family: monospace; background: var(--panel);
+  padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); }
+
+/* Inbox */
+.inbox { width: 100%; padding: 24px; display: flex; flex-direction: column; gap: 16px;
+  overflow-y: auto; }
+.dropzone {
+  border: 2px dashed var(--border); border-radius: 12px; padding: 60px;
+  text-align: center; background: var(--panel); transition: all 0.15s;
+  cursor: pointer;
+}
+.dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
+.dropzone h2 { margin: 0 0 8px; }
+.dropzone p { margin: 0; color: var(--muted); }
+.staged-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px;
+}
+.staged-card .filename { font-family: monospace; color: var(--muted); font-size: 12px; }
+.staged-card .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-top: 12px; }
+.staged-card label { display: block; font-size: 12px; color: var(--muted);
+  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.staged-card .full { grid-column: 1 / -1; }
+.staged-card .actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+.badge { display: inline-block; padding: 2px 8px; background: var(--accent-soft);
+  color: var(--accent); border-radius: 4px; font-size: 12px; }
+.badge.warn { background: #fdf3d6; color: #8b6500; }
+
+/* Library */
+.library { width: 100%; }
+.sidebar { width: 360px; background: var(--panel); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; height: 100%; }
+.sidebar .search-box { padding: 12px; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px; }
+.results { flex: 1; overflow-y: auto; }
+.result-item {
+  padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.result-item:hover { background: var(--hover); }
+.result-item.active { background: var(--accent-soft); }
+.result-item .title { font-weight: 500; margin-bottom: 2px; }
+.result-item .meta { color: var(--muted); font-size: 12px; }
+.viewer { flex: 1; display: flex; flex-direction: column; height: 100%; }
+.viewer-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+  background: var(--panel); display: flex; justify-content: space-between;
+  align-items: flex-start; gap: 12px; }
+.viewer-header h2 { margin: 0 0 4px; font-size: 16px; }
+.viewer-header .meta { color: var(--muted); font-size: 12px; }
+.viewer embed, .viewer iframe { flex: 1; width: 100%; border: none; background: #2a2a2a; }
+.empty-state { flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); }
+
+/* Topics view */
+.topics-view { width: 100%; padding: 24px; overflow-y: auto; }
+.topics-view h2 { margin-top: 0; }
+.topic-row { background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px; margin-bottom: 10px; display: grid;
+  grid-template-columns: 200px 1fr auto auto; gap: 10px; align-items: center; }
+.topic-row .keywords { color: var(--muted); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topic-row .count { background: var(--accent-soft); color: var(--accent);
+  padding: 2px 10px; border-radius: 12px; font-size: 12px; }
+
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--text);
+  color: white; padding: 10px 16px; border-radius: 6px;
+  opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.toast.error { background: #b34a2a; }
+
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: none; align-items: center; justify-content: center; z-index: 100; }
+.modal-bg.show { display: flex; }
+.modal { background: var(--panel); border-radius: 10px; padding: 20px;
+  width: 460px; max-width: 90vw; }
+.modal h3 { margin-top: 0; }
+.modal .actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Tabs -->
+  <div class="tabs" id="tabs" style="display:none">
+    <div class="tab active" data-view="inbox">Inbox</div>
+    <div class="tab" data-view="library">Library</div>
+    <div class="tab" data-view="topics">Topics</div>
+    <div style="flex:1"></div>
+    <div class="tab" id="lib-path" style="font-size:12px; color:var(--muted)"></div>
+  </div>
+
+  <!-- Setup view -->
+  <div class="view active" id="setup-view">
+    <div class="setup">
+      <h1>Et al.</h1>
+      <p style="color:var(--muted);margin-top:-8px;font-style:italic">Your papers and everyone else's.</p>
+      <p>Choose a folder where your library will live. PDFs, the database, and
+      the auto-generated <code>library.md</code> will be stored there.</p>
+      <button id="pick-folder-btn">Choose folder...</button>
+      <div class="path-display" id="path-display" style="display:none"></div>
+      <button id="confirm-setup-btn" style="display:none">Initialize library</button>
+    </div>
+  </div>
+
+  <!-- Inbox -->
+  <div class="view" id="inbox-view">
+    <div class="inbox">
+      <div class="dropzone" id="dropzone">
+        <h2>Drop a PDF here</h2>
+        <p>or click to choose a file</p>
+        <input type="file" id="file-input" accept=".pdf" style="display:none">
+      </div>
+      <div id="staged-list"></div>
+    </div>
+  </div>
+
+  <!-- Library -->
+  <div class="view" id="library-view">
+    <div class="library" style="display:flex; height:100%">
+      <div class="sidebar">
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="Search title, abstract, author...">
+          <select id="topic-filter"><option value="">All topics</option></select>
+        </div>
+        <div class="results" id="results"></div>
+      </div>
+      <div class="viewer" id="viewer">
+        <div class="empty-state">Select an article to read</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Topics -->
+  <div class="view" id="topics-view">
+    <div class="topics-view">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>Topics</h2>
+        <button id="new-topic-btn">+ New topic</button>
+      </div>
+      <p style="color:var(--muted)">Topics map to folders inside your library.
+        Keywords are used to suggest a topic when you drop a new PDF.</p>
+      <div id="topics-list"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Modal for manual DOI lookup / topic editing -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+// ---------- helpers ----------
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+function toast(msg, isErr = false) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.toggle('error', isErr);
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    ...opts,
+    body: opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)
+      ? JSON.stringify(opts.body) : opts.body,
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: 'Error' }));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return r.json();
+}
+
+function showModal(html) {
+  $('#modal-content').innerHTML = html;
+  $('#modal-bg').classList.add('show');
+}
+function closeModal() { $('#modal-bg').classList.remove('show'); }
+$('#modal-bg').addEventListener('click', e => {
+  if (e.target.id === 'modal-bg') closeModal();
+});
+
+// ---------- tab switching ----------
+$$('.tab[data-view]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const v = tab.dataset.view;
+    $$('.tab[data-view]').forEach(t => t.classList.toggle('active', t === tab));
+    $$('.view').forEach(view =>
+      view.classList.toggle('active', view.id === `${v}-view`));
+    if (v === 'library') loadLibrary();
+    if (v === 'topics') loadTopics();
+  });
+});
+
+// ---------- setup ----------
+async function init() {
+  const cfg = await api('/api/config');
+  if (cfg.configured) {
+    $('#setup-view').classList.remove('active');
+    $('#inbox-view').classList.add('active');
+    $('#tabs').style.display = 'flex';
+    $('#lib-path').textContent = cfg.config.library_path;
+    loadTopicsForFilter();
+  }
+}
+
+let pickedPath = null;
+$('#pick-folder-btn').addEventListener('click', async () => {
+  // Use PyWebView native folder picker
+  if (window.pywebview && window.pywebview.api) {
+    const folder = await window.pywebview.api.pick_folder();
+    if (folder) {
+      pickedPath = folder;
+      $('#path-display').textContent = folder;
+      $('#path-display').style.display = 'block';
+      $('#confirm-setup-btn').style.display = 'inline-block';
+    }
+  } else {
+    // Browser fallback — prompt
+    const p = prompt('Library folder path:');
+    if (p) {
+      pickedPath = p;
+      $('#path-display').textContent = p;
+      $('#path-display').style.display = 'block';
+      $('#confirm-setup-btn').style.display = 'inline-block';
+    }
+  }
+});
+
+$('#confirm-setup-btn').addEventListener('click', async () => {
+  try {
+    await api('/api/setup', { method: 'POST', body: { library_path: pickedPath } });
+    toast('Library initialized');
+    location.reload();
+  } catch (e) { toast(e.message, true); }
+});
+
+// ---------- inbox / ingestion ----------
+const dropzone = $('#dropzone');
+['dragover', 'dragenter'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => {
+  for (const f of e.dataTransfer.files) handleFile(f);
+});
+dropzone.addEventListener('click', () => $('#file-input').click());
+$('#file-input').addEventListener('change', e => {
+  for (const f of e.target.files) handleFile(f);
+});
+
+async function handleFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    toast('Only PDFs', true); return;
+  }
+  toast(`Processing ${file.name}...`);
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const result = await api('/api/ingest', { method: 'POST', body: fd });
+    renderStaged(result);
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderStaged(s) {
+  const list = $('#staged-list');
+  const card = document.createElement('div');
+  card.className = 'staged-card';
+  const m = s.metadata;
+  const sourceLabel = s.source === 'crossref'
+    ? '<span class="badge">CrossRef matched</span>'
+    : '<span class="badge warn">No DOI found — fill manually</span>';
+  const dupLabel = s.duplicate
+    ? '<span class="badge warn" style="margin-left:6px">Already in library</span>' : '';
+
+  card.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div class="filename">${s.original_filename}</div>
+        <div style="margin-top:4px">${sourceLabel}${dupLabel}</div>
+      </div>
+      ${s.source === 'manual' ? `<button class="ghost" data-act="lookup">Try DOI/URL...</button>` : ''}
+    </div>
+    <div class="grid">
+      <div><label>First author (surname)</label><input data-f="author" value="${m.author || ''}"></div>
+      <div><label>Year</label><input data-f="year" type="number" value="${m.year || ''}"></div>
+      <div class="full"><label>Title</label><input data-f="title" value="${m.title || ''}"></div>
+      <div><label>Journal</label><input data-f="journal" value="${m.journal || ''}"></div>
+      <div><label>DOI</label><input data-f="doi" value="${m.doi || ''}"></div>
+      <div><label>Topic</label><select data-f="topic">
+        ${s.topics.map(t =>
+          `<option value="${t}" ${t === s.suggested_topic ? 'selected' : ''}>${t}</option>`).join('')}
+      </select></div>
+      <div><label>Tags (comma-sep)</label><input data-f="tags" value=""></div>
+      <div class="full"><label>Abstract</label><textarea data-f="abstract" rows="3">${m.abstract || ''}</textarea></div>
+    </div>
+    <div class="actions">
+      <button class="ghost" data-act="discard">Discard</button>
+      <button data-act="save">Save to library</button>
+    </div>
+  `;
+  card.dataset.tempId = s.temp_id;
+  list.prepend(card);
+
+  card.querySelector('[data-act="discard"]').onclick = () => card.remove();
+  card.querySelector('[data-act="save"]').onclick = () => saveCard(card);
+  const lk = card.querySelector('[data-act="lookup"]');
+  if (lk) lk.onclick = () => manualLookup(card);
+}
+
+function readCardFields(card) {
+  const obj = { temp_id: card.dataset.tempId };
+  card.querySelectorAll('[data-f]').forEach(el => {
+    const v = el.value.trim();
+    obj[el.dataset.f] = v === '' ? null : (el.type === 'number' ? Number(v) : v);
+  });
+  obj.author = obj.author || 'Unknown';
+  obj.title = obj.title || 'Untitled';
+  return obj;
+}
+
+async function saveCard(card) {
+  const data = readCardFields(card);
+  if (!data.topic) { toast('Pick a topic', true); return; }
+  try {
+    const r = await api('/api/save', { method: 'POST', body: data });
+    if (r.skipped) {
+      toast('Skipped — already in library');
+    } else {
+      toast(`Saved as ${r.filename}`);
+    }
+    card.remove();
+  } catch (e) { toast(e.message, true); }
+}
+
+function manualLookup(card) {
+  showModal(`
+    <h3>Look up DOI or URL</h3>
+    <p style="color:var(--muted)">Paste a DOI (e.g. <code>10.1056/NEJMoa...</code>)
+       or an article URL containing one.</p>
+    <input type="text" id="lookup-input" placeholder="10.1056/...">
+    <div class="actions">
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+      <button id="lookup-go">Look up</button>
+    </div>
+  `);
+  $('#lookup-go').onclick = async () => {
+    const q = $('#lookup-input').value.trim();
+    if (!q) return;
+    try {
+      const r = await api('/api/lookup_doi', { method: 'POST', body: { query: q } });
+      if (!r.ok) { toast(r.reason, true); return; }
+      // Patch card fields
+      const m = r.metadata;
+      ['author','title','journal','year','doi','abstract'].forEach(f => {
+        const el = card.querySelector(`[data-f="${f}"]`);
+        if (el && m[f] != null) el.value = m[f];
+      });
+      const sel = card.querySelector('[data-f="topic"]');
+      if (sel && r.suggested_topic) sel.value = r.suggested_topic;
+      toast('Metadata loaded');
+      closeModal();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+// ---------- library ----------
+async function loadTopicsForFilter() {
+  try {
+    const r = await api('/api/topics');
+    const sel = $('#topic-filter');
+    sel.innerHTML = '<option value="">All topics</option>';
+    Object.keys(r.topics).sort().forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = `${t} (${r.counts[t] || 0})`;
+      sel.appendChild(opt);
+    });
+    const unc = (r.counts['_uncategorized'] || 0);
+    if (unc) {
+      const opt = document.createElement('option');
+      opt.value = '_uncategorized'; opt.textContent = `_uncategorized (${unc})`;
+      sel.appendChild(opt);
+    }
+  } catch {}
+}
+
+let searchTimer;
+$('#search-input').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadLibrary, 200);
+});
+$('#topic-filter').addEventListener('change', loadLibrary);
+
+async function loadLibrary() {
+  const q = $('#search-input').value.trim();
+  const topic = $('#topic-filter').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (topic) params.set('topic', topic);
+  const articles = await api('/api/articles?' + params.toString());
+  const list = $('#results');
+  list.innerHTML = '';
+  if (articles.length === 0) {
+    list.innerHTML = '<div style="padding:20px;color:var(--muted)">No results</div>';
+    return;
+  }
+  for (const a of articles) {
+    const div = document.createElement('div');
+    div.className = 'result-item';
+    div.innerHTML = `
+      <div class="title">${a.title}</div>
+      <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
+        <span style="color:var(--accent)">${a.topic}</span></div>`;
+    div.onclick = () => openArticle(a.id, div);
+    list.appendChild(div);
+  }
+}
+
+async function openArticle(id, el) {
+  $$('.result-item').forEach(e => e.classList.toggle('active', e === el));
+  const a = await api(`/api/article/${id}`);
+  $('#viewer').innerHTML = `
+    <div class="viewer-header">
+      <div>
+        <h2>${a.title}</h2>
+        <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
+          ${a.topic} ${a.doi ? '· ' + a.doi : ''}</div>
+      </div>
+      <button class="ghost danger" id="delete-article-btn">Delete</button>
+    </div>
+    <embed src="/pdf/${id}" type="application/pdf">
+  `;
+  $('#delete-article-btn').onclick = async () => {
+    if (!confirm(`Delete "${a.title}"?`)) return;
+    await api(`/api/article/${id}`, { method: 'DELETE' });
+    toast('Deleted');
+    loadLibrary();
+    $('#viewer').innerHTML = '<div class="empty-state">Select an article to read</div>';
+  };
+}
+
+// ---------- topics CRUD ----------
+async function loadTopics() {
+  const r = await api('/api/topics');
+  const list = $('#topics-list');
+  list.innerHTML = '';
+  Object.entries(r.topics).sort().forEach(([name, meta]) => {
+    const row = document.createElement('div');
+    row.className = 'topic-row';
+    row.innerHTML = `
+      <strong>${name}</strong>
+      <div class="keywords">${(meta.keywords || []).join(', ') || '<em>no keywords</em>'}</div>
+      <div class="count">${r.counts[name] || 0}</div>
+      <div>
+        <button class="ghost" data-act="edit">Edit</button>
+        <button class="ghost danger" data-act="del">Delete</button>
+      </div>`;
+    row.querySelector('[data-act="edit"]').onclick =
+      () => editTopic(name, meta.keywords || []);
+    row.querySelector('[data-act="del"]').onclick = () => deleteTopic(name);
+    list.appendChild(row);
+  });
+}
+
+$('#new-topic-btn').addEventListener('click', () => editTopic(null, []));
+
+function editTopic(oldName, keywords) {
+  const isNew = !oldName;
+  showModal(`
+    <h3>${isNew ? 'New topic' : 'Edit topic'}</h3>
+    <label style="font-size:12px;color:var(--muted)">NAME</label>
+    <input type="text" id="t-name" value="${oldName || ''}" ${isNew ? '' : ''}>
+    <label style="font-size:12px;color:var(--muted);margin-top:10px;display:block">
+      KEYWORDS (comma-separated)</label>
+    <textarea id="t-kw" rows="3">${keywords.join(', ')}</textarea>
+    <div class="actions">
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+      <button id="t-save">Save</button>
+    </div>
+  `);
+  $('#t-save').onclick = async () => {
+    const name = $('#t-name').value.trim();
+    const kw = $('#t-kw').value.split(',').map(s => s.trim()).filter(Boolean);
+    if (!name) { toast('Name required', true); return; }
+    try {
+      if (isNew) {
+        await api('/api/topics', { method: 'POST', body: { name, keywords: kw } });
+      } else {
+        await api('/api/topics', { method: 'PUT',
+          body: { old_name: oldName, new_name: name, keywords: kw } });
+      }
+      closeModal(); toast('Saved'); loadTopics(); loadTopicsForFilter();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function deleteTopic(name) {
+  if (!confirm(`Delete topic "${name}"?`)) return;
+  try {
+    await api(`/api/topics/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    toast('Deleted'); loadTopics(); loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- boot ----------
+init();
+</script>
+</body>
+</html>
