@@ -21,7 +21,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 import httpx
 import yaml
@@ -357,6 +357,10 @@ class TopicRename(BaseModel):
     keywords: list[str] = []
 
 
+class TopicSyncRequest(BaseModel):
+    mode: Literal["update", "reset"]
+
+
 # ----- Routes: setup -----
 
 @app.get("/api/config")
@@ -616,19 +620,66 @@ def put_topic(req: TopicRename) -> dict:
 @app.delete("/api/topics/{name}")
 def delete_topic(name: str) -> dict:
     topics = load_topics()
-    if name not in topics:
-        raise HTTPException(404, "Topic not found")
+    folder = library_root() / name
+    is_known = name in topics
+
     with db() as conn:
         cnt = conn.execute("SELECT COUNT(*) c FROM articles WHERE topic = ?",
                            (name,)).fetchone()["c"]
+
+    # Orphan = not in topics.yaml but has a folder or DB rows
+    if not is_known and cnt == 0 and not folder.exists():
+        raise HTTPException(404, "Topic not found")
+
     if cnt > 0:
         raise HTTPException(400, f"Topic has {cnt} articles — move them first")
-    del topics[name]
-    save_topics(topics)
-    folder = library_root() / name
+
+    if is_known:
+        del topics[name]
+        save_topics(topics)
     if folder.exists() and not any(folder.iterdir()):
         folder.rmdir()
     return {"ok": True}
+
+
+@app.post("/api/topics/sync")
+def post_topics_sync(req: TopicSyncRequest) -> dict:
+    """Sync the library's topics.yaml with the project's bundled pack."""
+    pack_data = yaml.safe_load(DEFAULT_TOPICS_FILE.read_text()) or {}
+    pack_topics: dict[str, dict] = pack_data.get("topics", {})
+    current = load_topics()
+
+    added: list[str] = []
+    kept: list[str] = []
+    removed: list[str] = []
+
+    if req.mode == "update":
+        merged = dict(current)
+        for name, meta in pack_topics.items():
+            if name in current:
+                kept.append(name)
+            else:
+                merged[name] = {"keywords": meta.get("keywords", [])}
+                added.append(name)
+        save_topics(merged)
+    else:  # reset
+        for name in pack_topics:
+            (kept if name in current else added).append(name)
+        for name in current:
+            if name not in pack_topics:
+                removed.append(name)
+        shutil.copy(DEFAULT_TOPICS_FILE, topics_path())
+
+    root = library_root()
+    for name in added:
+        (root / name).mkdir(exist_ok=True)
+
+    return {
+        "ok": True,
+        "added": sorted(added),
+        "kept": sorted(kept),
+        "removed": sorted(removed),
+    }
 
 
 # ----- Routes: delete article -----

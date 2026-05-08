@@ -194,6 +194,10 @@ input:focus, select:focus, textarea:focus {
       </div>
       <p style="color:var(--muted)">Topics map to folders inside your library.
         Keywords are used to suggest a topic when you drop a new PDF.</p>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button class="ghost" id="sync-update-btn">Update from project pack</button>
+        <button class="ghost" id="sync-reset-btn">Reset to project pack</button>
+      </div>
       <div id="topics-list"></div>
     </div>
   </div>
@@ -522,9 +526,59 @@ async function loadTopics() {
     row.querySelector('[data-act="del"]').onclick = () => deleteTopic(name);
     list.appendChild(row);
   });
+
+  // Orphans: topics with articles in DB but no longer in topics.yaml
+  // (excluding _uncategorized, the system overflow folder)
+  const orphans = Object.keys(r.counts)
+    .filter(name => !(name in r.topics) && name !== '_uncategorized')
+    .sort();
+  if (orphans.length > 0) {
+    const header = document.createElement('h3');
+    header.textContent = 'Orphaned topics';
+    header.style.cssText = 'margin-top:24px; color:#8b6500';
+    list.appendChild(header);
+    const note = document.createElement('p');
+    note.style.cssText = 'color:var(--muted); font-size:12px; margin-top:0; margin-bottom:10px';
+    note.textContent = 'These topics have articles but are no longer in topics.yaml. Move articles to a current topic or re-add the topic to clear the orphan.';
+    list.appendChild(note);
+    orphans.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'topic-row';
+      row.style.cssText = 'border-color:#fdf3d6; background:#fffbf0';
+      row.innerHTML = `
+        <strong>${name}</strong>
+        <div class="keywords"><em>orphaned — not in topics.yaml</em></div>
+        <div class="count" style="background:#fdf3d6;color:#8b6500">${r.counts[name]}</div>
+        <div>
+          <button class="ghost danger" data-act="del">Delete</button>
+        </div>`;
+      row.querySelector('[data-act="del"]').onclick = () => deleteTopic(name);
+      list.appendChild(row);
+    });
+  }
 }
 
 $('#new-topic-btn').addEventListener('click', () => editTopic(null, []));
+
+$('#sync-update-btn').addEventListener('click', async () => {
+  if (!confirm('Add any new topics from the project pack? Your existing topics and customizations will be preserved.')) return;
+  try {
+    const r = await api('/api/topics/sync', { method: 'POST', body: { mode: 'update' } });
+    const n = r.added.length;
+    toast(n === 0 ? 'No new topics — already up to date'
+                  : `Added ${n} topic${n > 1 ? 's' : ''}`);
+    loadTopics(); loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); }
+});
+
+$('#sync-reset-btn').addEventListener('click', async () => {
+  if (!confirm('This will replace your topics.yaml with the project pack. Customized keywords will be lost. Topic folders and articles on disk are NOT deleted, but topics removed from the pack will become orphaned. Continue?')) return;
+  try {
+    const r = await api('/api/topics/sync', { method: 'POST', body: { mode: 'reset' } });
+    toast(`Reset complete: +${r.added.length} ~${r.kept.length} -${r.removed.length}`);
+    loadTopics(); loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); }
+});
 
 function editTopic(oldName, keywords) {
   const isNew = !oldName;
