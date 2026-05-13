@@ -41,7 +41,8 @@ from pypdf import PdfReader
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
+GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
@@ -1105,16 +1106,24 @@ def get_app_version() -> dict:
 
 
 def _github_owner_repo() -> tuple[str, str] | None:
-    """Parse the owner/repo from the origin remote URL."""
-    if not (APP_DIR / ".git").exists():
-        return None
-    code, remote_url, _ = _git("remote", "get-url", "origin")
-    if code != 0 or not remote_url:
-        return None
-    m = re.search(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$", remote_url)
-    if not m:
-        return None
-    return m.group(1), m.group(2)
+    """Resolve owner/repo for update checks.
+
+    Source installs: prefer the local `origin` remote so forks work.
+    Bundled .app builds (no .git): use the GITHUB_REPO constant baked in
+    at build time.
+    """
+    if (APP_DIR / ".git").exists():
+        code, remote_url, _ = _git("remote", "get-url", "origin")
+        if code == 0 and remote_url:
+            m = re.search(
+                r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$", remote_url,
+            )
+            if m:
+                return m.group(1), m.group(2)
+    if GITHUB_REPO and "/" in GITHUB_REPO:
+        owner, repo = GITHUB_REPO.split("/", 1)
+        return owner, repo
+    return None
 
 
 @app.post("/api/app/check_updates")
