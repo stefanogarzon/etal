@@ -35,6 +35,8 @@ from pypdf import PdfReader
 # Paths & config
 # ---------------------------------------------------------------------------
 
+__version__ = "0.1.0"
+
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
 DEFAULT_TOPICS_FILE = APP_DIR / "topics.yaml"
@@ -1076,39 +1078,69 @@ def _git(*args: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
+@app.get("/api/app/version")
+def get_app_version() -> dict:
+    return {"version": __version__}
+
+
+def _github_owner_repo() -> tuple[str, str] | None:
+    """Parse the owner/repo from the origin remote URL."""
+    if not (APP_DIR / ".git").exists():
+        return None
+    code, remote_url, _ = _git("remote", "get-url", "origin")
+    if code != 0 or not remote_url:
+        return None
+    m = re.search(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$", remote_url)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
 @app.post("/api/app/check_updates")
 def post_check_updates() -> dict:
-    """Return whether the project repo has a remote and how many commits behind it is."""
-    if not (APP_DIR / ".git").exists():
-        return {"ok": False, "reason": "Project is not a git repository"}
-    code, remotes, _ = _git("remote", "-v")
-    if code != 0 or not remotes:
-        return {"ok": False, "reason": "No git remote configured. "
-                "Run `git remote add origin <url>` to enable updates."}
-    # Refresh remote refs (non-fatal if it fails — could be offline)
-    _git("fetch", "--quiet")
-    # Find the current branch's upstream
-    code, upstream, _ = _git("rev-parse", "--abbrev-ref", "@{u}")
-    if code != 0:
-        return {"ok": False, "reason": "Current branch has no upstream configured. "
-                "Run `git push -u origin <branch>` once."}
-    code, behind, _ = _git("rev-list", "HEAD..@{u}", "--count")
-    if code != 0:
-        return {"ok": False, "reason": "Could not compare with upstream"}
-    behind_n = int(behind or 0)
+    """Compare local __version__ with the latest GitHub Release tag."""
+    owner_repo = _github_owner_repo()
+    if not owner_repo:
+        return {"ok": False, "reason": "No GitHub remote configured.",
+                "current": __version__}
+    owner, repo = owner_repo
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": f"EtAl/{__version__}"},
+            )
+        if r.status_code == 404:
+            return {"ok": True, "current": __version__, "latest": None,
+                    "updates_available": False,
+                    "reason": "No releases published yet"}
+        if r.status_code != 200:
+            return {"ok": False, "current": __version__,
+                    "reason": f"GitHub API returned {r.status_code}"}
+        data = r.json()
+    except Exception as e:
+        return {"ok": False, "current": __version__,
+                "reason": f"Could not reach GitHub: {e}"}
+
+    latest_tag = (data.get("tag_name") or "").lstrip("v")
     return {
         "ok": True,
-        "updates_available": behind_n > 0,
-        "commits_behind": behind_n,
-        "upstream": upstream,
+        "current": __version__,
+        "latest": latest_tag or None,
+        "updates_available": bool(latest_tag) and latest_tag != __version__,
+        "release_url": data.get("html_url"),
     }
 
 
 @app.post("/api/app/update")
 def post_app_update() -> dict:
-    """Run `git pull --ff-only` to apply available updates."""
+    """Apply the latest update. For source installs (with .git/) this is a
+    `git pull --ff-only`. Packaged .app builds will need a different path."""
     if not (APP_DIR / ".git").exists():
-        raise HTTPException(400, "Project is not a git repository")
+        raise HTTPException(400, "Self-update is not yet supported for "
+                                 "packaged builds. Re-download from the "
+                                 "GitHub Releases page.")
     code, out, err = _git("pull", "--ff-only")
     if code != 0:
         raise HTTPException(400, err or out or "git pull failed")

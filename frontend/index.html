@@ -256,7 +256,8 @@ input:focus, select:focus, textarea:focus {
       <div id="reclassify-result" style="margin-top:12px"></div>
 
       <h3 style="margin-top:24px">App update</h3>
-      <p style="color:var(--muted);font-size:13px">Pull the latest version of Et al. from its git remote (fast-forward only).</p>
+      <p style="color:var(--muted);font-size:13px">Current version: <strong id="current-version">…</strong></p>
+      <p style="color:var(--muted);font-size:13px">Compares against the latest GitHub Release. For now, applying an update runs <code>git pull --ff-only</code> against your source checkout.</p>
       <div style="display:flex; gap:8px; margin-top:8px;">
         <button class="ghost" id="check-updates-btn">Check for updates</button>
         <button class="ghost" id="apply-update-btn" style="display:none">Apply update</button>
@@ -804,11 +805,15 @@ async function editArticle(a) {
 }
 
 // ---------- tools tab ----------
-function resetToolsView() {
+async function resetToolsView() {
   $('#reclassify-result').innerHTML = '';
   $('#reclassify-apply-btn').style.display = 'none';
   $('#update-status').textContent = '';
   $('#apply-update-btn').style.display = 'none';
+  try {
+    const v = await api('/api/app/version');
+    $('#current-version').textContent = `v${v.version}`;
+  } catch { $('#current-version').textContent = '?'; }
 }
 
 $('#refresh-meta-btn').addEventListener('click', async () => {
@@ -872,11 +877,15 @@ $('#check-updates-btn').addEventListener('click', async () => {
       status.style.color = '#b34a2a';
       $('#apply-update-btn').style.display = 'none';
     } else if (r.updates_available) {
-      status.textContent = `${r.commits_behind} commit${r.commits_behind > 1 ? 's' : ''} behind ${r.upstream}.`;
+      status.innerHTML = `New release: <strong>v${r.latest}</strong> (you have v${r.current}).`;
       status.style.color = 'var(--accent)';
       $('#apply-update-btn').style.display = 'inline-block';
+    } else if (!r.latest) {
+      status.textContent = r.reason || `No releases published. You're on v${r.current}.`;
+      status.style.color = 'var(--muted)';
+      $('#apply-update-btn').style.display = 'none';
     } else {
-      status.textContent = `Up to date with ${r.upstream}.`;
+      status.textContent = `Up to date — you're on the latest v${r.current}.`;
       status.style.color = 'var(--muted)';
       $('#apply-update-btn').style.display = 'none';
     }
