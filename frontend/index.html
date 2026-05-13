@@ -902,7 +902,10 @@ $('#apply-update-btn').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = 'Updating...';
   try {
     const r = await api('/api/app/update', { method: 'POST', body: {} });
-    $('#update-status').textContent = (r.output || 'Updated.') + ' — please restart the app.';
+    const text = r.message || r.output || 'Updated.';
+    $('#update-status').textContent = r.restart_required
+      ? text + ' (Restart required.)'
+      : text;
     $('#update-status').style.color = 'var(--accent)';
     $('#apply-update-btn').style.display = 'none';
   } catch (e) { toast(e.message, true); }

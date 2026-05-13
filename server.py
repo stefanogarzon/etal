@@ -14,10 +14,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shlex
 import shutil
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -35,7 +41,7 @@ from pypdf import PdfReader
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
@@ -1070,12 +1076,27 @@ def post_reclassify(req: ReclassifyRequest) -> dict:
 # ----- Routes: app self-update -----
 
 def _git(*args: str) -> tuple[int, str, str]:
-    import subprocess
     result = subprocess.run(
         ["git", *args], cwd=str(APP_DIR),
         capture_output=True, text=True, timeout=30,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def _is_frozen() -> bool:
+    """True when running inside a PyInstaller-bundled .app."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def _bundled_app_path() -> Path | None:
+    """Return the .app bundle path when running frozen, else None."""
+    if not _is_frozen():
+        return None
+    exe = Path(sys.executable)
+    # PyInstaller --windowed layout: <Name>.app/Contents/MacOS/<binary>
+    if exe.parent.name == "MacOS" and exe.parent.parent.name == "Contents":
+        return exe.parent.parent.parent
+    return None
 
 
 @app.get("/api/app/version")
@@ -1133,14 +1154,125 @@ def post_check_updates() -> dict:
     }
 
 
+def _fetch_latest_release() -> dict:
+    """Hit the GitHub API for the latest release. Raises HTTPException."""
+    owner_repo = _github_owner_repo()
+    if not owner_repo:
+        raise HTTPException(400, "No GitHub remote configured")
+    owner, repo = owner_repo
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/releases/latest",
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": f"EtAl/{__version__}"},
+            )
+    except Exception as e:
+        raise HTTPException(400, f"Could not reach GitHub: {e}") from e
+    if r.status_code != 200:
+        raise HTTPException(400, f"GitHub API returned {r.status_code}")
+    return r.json()
+
+
+def _update_packaged() -> dict:
+    """Download latest .app.zip from GitHub release, extract, swap in place."""
+    current_app = _bundled_app_path()
+    if not current_app:
+        raise HTTPException(500, "Could not locate the running .app bundle")
+
+    release = _fetch_latest_release()
+    assets = release.get("assets") or []
+    zip_asset = next(
+        (a for a in assets if a.get("name", "").lower().endswith(".app.zip")
+         or a.get("name", "").lower().endswith(".zip")),
+        None,
+    )
+    if not zip_asset:
+        raise HTTPException(400, "Latest release has no .app.zip asset")
+    download_url = zip_asset.get("browser_download_url")
+    if not download_url:
+        raise HTTPException(400, "Asset has no download URL")
+
+    staging = Path(tempfile.gettempdir()) / "etal_update"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    zip_path = staging / "update.zip"
+
+    logger.info("Downloading update from %s", download_url)
+    try:
+        with httpx.Client(timeout=180.0, follow_redirects=True) as client:
+            r = client.get(download_url)
+    except Exception as e:
+        raise HTTPException(400, f"Download failed: {e}") from e
+    if r.status_code != 200:
+        raise HTTPException(400, f"Download returned {r.status_code}")
+    zip_path.write_bytes(r.content)
+
+    extract_dir = staging / "extracted"
+    extract_dir.mkdir()
+    # ditto preserves macOS metadata and signature info
+    result = subprocess.run(
+        ["ditto", "-x", "-k", str(zip_path), str(extract_dir)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise HTTPException(400, f"Extract failed: {result.stderr or result.stdout}")
+
+    apps = list(extract_dir.glob("*.app"))
+    if not apps:
+        raise HTTPException(400, "Extracted archive contains no .app bundle")
+    new_app = apps[0]
+
+    # Write a shell script that waits for us to exit, then swaps and relaunches.
+    swap_script = staging / "swap.sh"
+    timestamp = int(time.time())
+    backup = Path.home() / ".Trash" / f"{current_app.name}.{timestamp}.bak"
+    swap_script.write_text(
+        "#!/bin/bash\n"
+        "set -e\n"
+        f"APP_PID={os.getpid()}\n"
+        "# Wait until the app process actually exits\n"
+        "while kill -0 \"$APP_PID\" 2>/dev/null; do sleep 0.3; done\n"
+        "sleep 0.5\n"  # filesystem settling buffer
+        f"mv {shlex.quote(str(current_app))} {shlex.quote(str(backup))} || true\n"
+        f"mv {shlex.quote(str(new_app))} {shlex.quote(str(current_app))}\n"
+        f"open {shlex.quote(str(current_app))}\n"
+    )
+    swap_script.chmod(0o755)
+
+    subprocess.Popen(
+        ["/bin/bash", str(swap_script)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+
+    # Give the HTTP response a moment to flush, then exit so the swap script
+    # can take over.
+    def quit_soon() -> None:
+        time.sleep(1.2)
+        os._exit(0)
+
+    threading.Thread(target=quit_soon, daemon=True).start()
+
+    return {
+        "ok": True,
+        "from_version": __version__,
+        "to_version": (release.get("tag_name") or "").lstrip("v"),
+        "restart_required": True,
+        "message": "Update downloaded. The app will quit and relaunch in a moment.",
+    }
+
+
 @app.post("/api/app/update")
 def post_app_update() -> dict:
-    """Apply the latest update. For source installs (with .git/) this is a
-    `git pull --ff-only`. Packaged .app builds will need a different path."""
+    """Apply the latest update. Source installs: git pull --ff-only.
+    Packaged builds: download the latest release's .app.zip and swap."""
+    if _is_frozen():
+        return _update_packaged()
     if not (APP_DIR / ".git").exists():
-        raise HTTPException(400, "Self-update is not yet supported for "
-                                 "packaged builds. Re-download from the "
-                                 "GitHub Releases page.")
+        raise HTTPException(400, "No update mechanism available "
+                                 "(not a git checkout and not a packaged build)")
     code, out, err = _git("pull", "--ff-only")
     if code != 0:
         raise HTTPException(400, err or out or "git pull failed")
