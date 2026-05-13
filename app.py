@@ -16,6 +16,7 @@ from server import app, db, library_root, set_window_ref
 
 HOST = "127.0.0.1"
 PORT = 8765
+IS_FROZEN = bool(getattr(sys, "frozen", False))
 
 
 def wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
@@ -30,7 +31,8 @@ def wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
 
 
 def run_server() -> None:
-    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    uvicorn.run(app, host=HOST, port=PORT,
+                log_level="warning" if IS_FROZEN else "info")
 
 
 class JSAPI:
@@ -126,7 +128,7 @@ def main() -> None:
         min_size=(1000, 700),
     )
     set_window_ref(window)
-    webview.start(debug=True)
+    webview.start(debug=not IS_FROZEN)
 
 
 if __name__ == "__main__":

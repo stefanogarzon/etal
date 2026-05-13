@@ -41,7 +41,7 @@ from pypdf import PdfReader
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
