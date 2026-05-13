@@ -72,8 +72,12 @@ input:focus, select:focus, textarea:focus {
   padding: 16px;
 }
 .staged-card .filename { font-family: monospace; color: var(--muted); font-size: 12px; }
-.staged-card .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-  margin-top: 12px; }
+.staged-card .body { display: grid; grid-template-columns: minmax(280px, 400px) 1fr;
+  gap: 16px; margin-top: 12px; }
+.staged-card .pdf-preview { height: 520px; border: 1px solid var(--border);
+  border-radius: 6px; overflow: hidden; background: #2a2a2a; }
+.staged-card .pdf-preview iframe { width: 100%; height: 100%; border: none; }
+.staged-card .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .staged-card label { display: block; font-size: 12px; color: var(--muted);
   margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
 .staged-card .full { grid-column: 1 / -1; }
@@ -141,6 +145,20 @@ input:focus, select:focus, textarea:focus {
 .splash-handle { color: var(--muted); font-size: 13px; letter-spacing: 0.3px; }
 .splash-motto { color: var(--text); font-style: italic; font-size: 17px;
   font-family: Georgia, "Times New Roman", serif; }
+.splash-gauge { width: 240px; height: 4px; background: var(--border);
+  border-radius: 2px; overflow: hidden; margin-top: 10px; }
+.splash-gauge-fill { height: 100%; background: var(--accent); width: 0;
+  animation: splash-fill 5s linear forwards; }
+@keyframes splash-fill { from { width: 0; } to { width: 100%; } }
+
+/* Ribbon (persistent header) */
+.ribbon { display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--border); }
+.ribbon img { width: 36px; height: 36px; object-fit: contain; }
+.ribbon-text { display: flex; flex-direction: column; line-height: 1.2; }
+.ribbon-text strong { font-size: 14px; }
+.ribbon-text span { font-size: 11px; color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body>
@@ -150,14 +168,25 @@ input:focus, select:focus, textarea:focus {
   <img src="/icons/etal-badge.png" alt="Et al.">
   <div class="splash-handle">@stefanogarzon</div>
   <div class="splash-motto">Your papers...and everyone else's.</div>
+  <div class="splash-gauge"><div class="splash-gauge-fill"></div></div>
 </div>
 
 <div class="app" id="app">
+  <!-- Ribbon (shown only after setup) -->
+  <div class="ribbon" id="ribbon" style="display:none">
+    <img src="/icons/etal-badge.png" alt="Et al.">
+    <div class="ribbon-text">
+      <strong>Et al.</strong>
+      <span>Your papers...and everyone else's.</span>
+    </div>
+  </div>
+
   <!-- Tabs -->
   <div class="tabs" id="tabs" style="display:none">
     <div class="tab active" data-view="inbox">Inbox</div>
     <div class="tab" data-view="library">Library</div>
     <div class="tab" data-view="topics">Topics</div>
+    <div class="tab" data-view="tools">Tools</div>
     <div style="flex:1"></div>
     <div class="tab" id="lib-path" style="font-size:12px; color:var(--muted)"></div>
   </div>
@@ -203,6 +232,39 @@ input:focus, select:focus, textarea:focus {
     </div>
   </div>
 
+  <!-- Tools -->
+  <div class="view" id="tools-view">
+    <div class="topics-view">
+      <h2>Tools</h2>
+      <p style="color:var(--muted)">Bulk maintenance operations and app updates.</p>
+
+      <h3 style="margin-top:20px">Refresh metadata</h3>
+      <p style="color:var(--muted);font-size:13px">Re-query CrossRef for every article that has a DOI. Useful after corrections in CrossRef or to fill missing fields.</p>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <label style="text-transform:none;letter-spacing:0;font-size:13px;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="refresh-only-missing" checked style="width:auto"> Only fill missing fields (don't overwrite existing)
+        </label>
+      </div>
+      <button class="ghost" id="refresh-meta-btn" style="margin-top:8px">Refresh now</button>
+
+      <h3 style="margin-top:24px">Reclassify topics</h3>
+      <p style="color:var(--muted);font-size:13px">Re-run topic suggestion on every article. Preview the proposed moves before applying.</p>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="ghost" id="reclassify-preview-btn">Preview changes</button>
+        <button class="ghost danger" id="reclassify-apply-btn" style="display:none">Apply changes</button>
+      </div>
+      <div id="reclassify-result" style="margin-top:12px"></div>
+
+      <h3 style="margin-top:24px">App update</h3>
+      <p style="color:var(--muted);font-size:13px">Pull the latest version of Et al. from its git remote (fast-forward only).</p>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="ghost" id="check-updates-btn">Check for updates</button>
+        <button class="ghost" id="apply-update-btn" style="display:none">Apply update</button>
+      </div>
+      <div id="update-status" style="margin-top:12px;color:var(--muted);font-size:13px"></div>
+    </div>
+  </div>
+
   <!-- Topics -->
   <div class="view" id="topics-view">
     <div class="topics-view">
@@ -242,10 +304,11 @@ function toast(msg, isErr = false) {
 }
 
 async function api(path, opts = {}) {
+  const isFormData = opts.body instanceof FormData;
   const r = await fetch(path, {
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    headers: (opts.body && !isFormData) ? { 'Content-Type': 'application/json' } : {},
     ...opts,
-    body: opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)
+    body: opts.body && typeof opts.body === 'object' && !isFormData
       ? JSON.stringify(opts.body) : opts.body,
   });
   if (!r.ok) {
@@ -273,6 +336,7 @@ $$('.tab[data-view]').forEach(tab => {
       view.classList.toggle('active', view.id === `${v}-view`));
     if (v === 'library') loadLibrary();
     if (v === 'topics') loadTopics();
+    if (v === 'tools') resetToolsView();
   });
 });
 
@@ -282,6 +346,7 @@ async function init() {
   if (cfg.configured) {
     $('#setup-view').classList.remove('active');
     $('#inbox-view').classList.add('active');
+    $('#ribbon').style.display = 'flex';
     $('#tabs').style.display = 'flex';
     $('#lib-path').textContent = cfg.config.library_path;
     loadTopicsForFilter();
@@ -331,6 +396,7 @@ dropzone.addEventListener('drop', e => {
 dropzone.addEventListener('click', () => $('#file-input').click());
 $('#file-input').addEventListener('change', e => {
   for (const f of e.target.files) handleFile(f);
+  e.target.value = '';
 });
 
 async function handleFile(file) {
@@ -357,6 +423,7 @@ function renderStaged(s) {
   const dupLabel = s.duplicate
     ? '<span class="badge warn" style="margin-left:6px">Already in library</span>' : '';
 
+  const pdfUrl = `/static/pdfjs/web/viewer.html?file=${encodeURIComponent('/staged/' + s.temp_id)}#pagemode=none`;
   card.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <div>
@@ -365,18 +432,29 @@ function renderStaged(s) {
       </div>
       ${s.source === 'manual' ? `<button class="ghost" data-act="lookup">Try DOI/URL...</button>` : ''}
     </div>
-    <div class="grid">
-      <div><label>First author (surname)</label><input data-f="author" value="${m.author || ''}"></div>
-      <div><label>Year</label><input data-f="year" type="number" value="${m.year || ''}"></div>
-      <div class="full"><label>Title</label><input data-f="title" value="${m.title || ''}"></div>
-      <div><label>Journal</label><input data-f="journal" value="${m.journal || ''}"></div>
-      <div><label>DOI</label><input data-f="doi" value="${m.doi || ''}"></div>
-      <div><label>Topic</label><select data-f="topic">
-        ${s.topics.map(t =>
-          `<option value="${t}" ${t === s.suggested_topic ? 'selected' : ''}>${t}</option>`).join('')}
-      </select></div>
-      <div><label>Tags (comma-sep)</label><input data-f="tags" value=""></div>
-      <div class="full"><label>Abstract</label><textarea data-f="abstract" rows="3">${m.abstract || ''}</textarea></div>
+    <div class="body">
+      <div class="pdf-preview">
+        <iframe src="${pdfUrl}" title="Preview"></iframe>
+      </div>
+      <div class="grid">
+        <div><label>First author (surname)</label><input data-f="author" value="${m.author || ''}"></div>
+        <div><label>Year</label><input data-f="year" type="number" value="${m.year || ''}"></div>
+        <div class="full"><label>Title</label><input data-f="title" value="${m.title || ''}"></div>
+        <div><label>Journal</label><input data-f="journal" value="${m.journal || ''}"></div>
+        <div><label>DOI</label><input data-f="doi" value="${m.doi || ''}"></div>
+        <div><label>Topic</label><select data-f="topic">
+          ${s.topics.map(t =>
+            `<option value="${t}" ${t === s.suggested_topic ? 'selected' : ''}>${t}</option>`).join('')}
+        </select></div>
+        <div><label>Tags (comma-sep)</label><input data-f="tags" value=""></div>
+        <div class="full">
+          <label style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Abstract</span>
+            <a href="#" data-act="extract-abstract" style="font-size:11px;color:var(--accent);text-transform:none;letter-spacing:0;">Auto-fill from PDF</a>
+          </label>
+          <textarea data-f="abstract" rows="3">${m.abstract || ''}</textarea>
+        </div>
+      </div>
     </div>
     <div class="actions">
       <button class="ghost" data-act="discard">Discard</button>
@@ -386,10 +464,23 @@ function renderStaged(s) {
   card.dataset.tempId = s.temp_id;
   list.prepend(card);
 
-  card.querySelector('[data-act="discard"]').onclick = () => card.remove();
+  card.querySelector('[data-act="discard"]').onclick = async () => {
+    try { await api(`/api/discard/${encodeURIComponent(s.temp_id)}`, { method: 'POST', body: {} }); } catch {}
+    card.remove();
+  };
   card.querySelector('[data-act="save"]').onclick = () => saveCard(card);
   const lk = card.querySelector('[data-act="lookup"]');
   if (lk) lk.onclick = () => manualLookup(card);
+  const ex = card.querySelector('[data-act="extract-abstract"]');
+  if (ex) ex.onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api(`/api/extract_abstract/${encodeURIComponent(s.temp_id)}`, { method: 'POST', body: {} });
+      const ta = card.querySelector('[data-f="abstract"]');
+      if (r.abstract) { ta.value = r.abstract; toast('Abstract extracted'); }
+      else { toast('No abstract found in PDF', true); }
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 function readCardFields(card) {
@@ -412,6 +503,7 @@ async function saveCard(card) {
       toast('Skipped — already in library');
     } else {
       toast(`Saved as ${r.filename}`);
+      loadTopicsForFilter();
     }
     card.remove();
   } catch (e) { toast(e.message, true); }
@@ -510,10 +602,32 @@ async function openArticle(id, el) {
         <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
           ${a.topic} ${a.doi ? '· ' + a.doi : ''}</div>
       </div>
-      <button class="ghost danger" id="delete-article-btn">Delete</button>
+      <div style="display:flex; gap:6px;">
+        <button class="ghost" id="edit-article-btn">Edit</button>
+        <button class="ghost" id="share-btn">Share...</button>
+        <button class="ghost" id="open-external-btn">Open in Preview</button>
+        <button class="ghost danger" id="delete-article-btn">Delete</button>
+      </div>
     </div>
-    <iframe src="/pdf/${id}" title="${a.title}"></iframe>
+    <iframe src="/static/pdfjs/web/viewer.html?file=${encodeURIComponent('/pdf/' + id)}" title="${a.title}"></iframe>
   `;
+  $('#open-external-btn').onclick = async () => {
+    if (window.pywebview && window.pywebview.api) {
+      const ok = await window.pywebview.api.open_external(id);
+      if (!ok) toast('Could not open PDF', true);
+    } else {
+      window.open(`/pdf/${id}`, '_blank');
+    }
+  };
+  $('#share-btn').onclick = async () => {
+    if (!window.pywebview || !window.pywebview.api) {
+      toast('Share is only available in the desktop app', true);
+      return;
+    }
+    const ok = await window.pywebview.api.share_pdf(id);
+    if (!ok) toast('Could not share PDF', true);
+  };
+  $('#edit-article-btn').onclick = () => editArticle(a);
   $('#delete-article-btn').onclick = async () => {
     if (!confirm(`Delete "${a.title}"?`)) return;
     await api(`/api/article/${id}`, { method: 'DELETE' });
@@ -635,6 +749,156 @@ async function deleteTopic(name) {
     toast('Deleted'); loadTopics(); loadTopicsForFilter();
   } catch (e) { toast(e.message, true); }
 }
+
+// ---------- edit article ----------
+async function editArticle(a) {
+  // Fetch the current topic list for the dropdown
+  let topicsList = [];
+  try {
+    const r = await api('/api/topics');
+    topicsList = Object.keys(r.topics).sort();
+  } catch {}
+  if (!topicsList.includes(a.topic)) topicsList.unshift(a.topic);
+
+  showModal(`
+    <h3>Edit article</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div><label style="font-size:11px;color:var(--muted)">FIRST AUTHOR</label><input id="ea-author" value="${(a.author || '').replace(/"/g, '&quot;')}"></div>
+      <div><label style="font-size:11px;color:var(--muted)">YEAR</label><input id="ea-year" type="number" value="${a.year || ''}"></div>
+      <div style="grid-column:1/-1"><label style="font-size:11px;color:var(--muted)">TITLE</label><input id="ea-title" value="${(a.title || '').replace(/"/g, '&quot;')}"></div>
+      <div><label style="font-size:11px;color:var(--muted)">JOURNAL</label><input id="ea-journal" value="${(a.journal || '').replace(/"/g, '&quot;')}"></div>
+      <div><label style="font-size:11px;color:var(--muted)">DOI</label><input id="ea-doi" value="${(a.doi || '').replace(/"/g, '&quot;')}"></div>
+      <div><label style="font-size:11px;color:var(--muted)">TOPIC</label><select id="ea-topic">
+        ${topicsList.map(t => `<option value="${t}" ${t === a.topic ? 'selected' : ''}>${t}</option>`).join('')}
+      </select></div>
+      <div><label style="font-size:11px;color:var(--muted)">TAGS</label><input id="ea-tags" value="${(a.tags || '').replace(/"/g, '&quot;')}"></div>
+      <div style="grid-column:1/-1"><label style="font-size:11px;color:var(--muted)">ABSTRACT</label><textarea id="ea-abstract" rows="4">${a.abstract || ''}</textarea></div>
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+      <button id="ea-save">Save changes</button>
+    </div>
+  `);
+  $('#ea-save').onclick = async () => {
+    const body = {
+      author: $('#ea-author').value.trim() || 'Unknown',
+      title: $('#ea-title').value.trim() || 'Untitled',
+      journal: $('#ea-journal').value.trim() || null,
+      year: parseInt($('#ea-year').value) || null,
+      doi: $('#ea-doi').value.trim() || null,
+      topic: $('#ea-topic').value,
+      abstract: $('#ea-abstract').value.trim() || null,
+      tags: $('#ea-tags').value.trim() || null,
+    };
+    try {
+      const r = await api(`/api/article/${a.id}`, { method: 'PATCH', body });
+      toast('Saved');
+      closeModal();
+      loadLibrary();
+      loadTopicsForFilter();
+      // Re-open the article to refresh the viewer
+      const updated = await api(`/api/article/${a.id}`);
+      openArticle(a.id, null);
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+// ---------- tools tab ----------
+function resetToolsView() {
+  $('#reclassify-result').innerHTML = '';
+  $('#reclassify-apply-btn').style.display = 'none';
+  $('#update-status').textContent = '';
+  $('#apply-update-btn').style.display = 'none';
+}
+
+$('#refresh-meta-btn').addEventListener('click', async () => {
+  const onlyMissing = $('#refresh-only-missing').checked;
+  if (!confirm(`Re-query CrossRef for every article with a DOI? ${onlyMissing ? 'Only missing fields will be filled.' : 'Existing fields will be overwritten by CrossRef data.'}`)) return;
+  const btn = $('#refresh-meta-btn');
+  btn.disabled = true; btn.textContent = 'Refreshing...';
+  try {
+    const r = await api('/api/articles/refresh_metadata', {
+      method: 'POST', body: { only_missing: onlyMissing },
+    });
+    toast(`Updated ${r.updated}/${r.total} · ${r.skipped_no_doi} no-DOI · ${r.failed} failed`);
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = 'Refresh now';
+});
+
+let _reclassifyChanges = [];
+$('#reclassify-preview-btn').addEventListener('click', async () => {
+  const btn = $('#reclassify-preview-btn');
+  btn.disabled = true; btn.textContent = 'Scanning...';
+  try {
+    const r = await api('/api/articles/reclassify', { method: 'POST', body: { apply: false } });
+    _reclassifyChanges = r.changes || [];
+    const out = $('#reclassify-result');
+    if (_reclassifyChanges.length === 0) {
+      out.innerHTML = '<p style="color:var(--muted)">No changes — every article is already on its best-matching topic.</p>';
+      $('#reclassify-apply-btn').style.display = 'none';
+    } else {
+      out.innerHTML = `<p>${_reclassifyChanges.length} article${_reclassifyChanges.length > 1 ? 's' : ''} would move:</p>` +
+        '<ul style="margin-top:6px;padding-left:20px;font-size:13px;max-height:280px;overflow-y:auto;">' +
+        _reclassifyChanges.map(c => `<li>${c.from_topic} → <strong>${c.to_topic}</strong>: ${c.title.slice(0, 100)}${c.title.length > 100 ? '...' : ''}</li>`).join('') +
+        '</ul>';
+      $('#reclassify-apply-btn').style.display = 'inline-block';
+    }
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = 'Preview changes';
+});
+
+$('#reclassify-apply-btn').addEventListener('click', async () => {
+  if (!confirm(`Move ${_reclassifyChanges.length} article${_reclassifyChanges.length > 1 ? 's' : ''} to their new topics? PDF files will be moved on disk.`)) return;
+  const btn = $('#reclassify-apply-btn');
+  btn.disabled = true; btn.textContent = 'Applying...';
+  try {
+    const r = await api('/api/articles/reclassify', { method: 'POST', body: { apply: true } });
+    toast(`Reclassified ${r.applied} article${r.applied > 1 ? 's' : ''}`);
+    $('#reclassify-result').innerHTML = '';
+    $('#reclassify-apply-btn').style.display = 'none';
+    loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = 'Apply changes';
+});
+
+$('#check-updates-btn').addEventListener('click', async () => {
+  const status = $('#update-status');
+  const btn = $('#check-updates-btn');
+  btn.disabled = true; btn.textContent = 'Checking...';
+  try {
+    const r = await api('/api/app/check_updates', { method: 'POST', body: {} });
+    if (!r.ok) {
+      status.textContent = r.reason || 'Update check failed';
+      status.style.color = '#b34a2a';
+      $('#apply-update-btn').style.display = 'none';
+    } else if (r.updates_available) {
+      status.textContent = `${r.commits_behind} commit${r.commits_behind > 1 ? 's' : ''} behind ${r.upstream}.`;
+      status.style.color = 'var(--accent)';
+      $('#apply-update-btn').style.display = 'inline-block';
+    } else {
+      status.textContent = `Up to date with ${r.upstream}.`;
+      status.style.color = 'var(--muted)';
+      $('#apply-update-btn').style.display = 'none';
+    }
+  } catch (e) {
+    status.textContent = e.message;
+    status.style.color = '#b34a2a';
+  }
+  btn.disabled = false; btn.textContent = 'Check for updates';
+});
+
+$('#apply-update-btn').addEventListener('click', async () => {
+  if (!confirm('Apply the pending update? You will need to restart the app afterwards.')) return;
+  const btn = $('#apply-update-btn');
+  btn.disabled = true; btn.textContent = 'Updating...';
+  try {
+    const r = await api('/api/app/update', { method: 'POST', body: {} });
+    $('#update-status').textContent = (r.output || 'Updated.') + ' — please restart the app.';
+    $('#update-status').style.color = 'var(--accent)';
+    $('#apply-update-btn').style.display = 'none';
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = 'Apply update';
+});
 
 // ---------- splash ----------
 setTimeout(() => {

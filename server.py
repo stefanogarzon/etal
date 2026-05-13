@@ -174,20 +174,56 @@ def save_topics(topics: dict[str, dict]) -> None:
     topics_path().write_text(yaml.safe_dump({"topics": topics}, sort_keys=True))
 
 
-def suggest_topic(text: str) -> str:
-    """Score topics by keyword hits; return best match or '_uncategorized'."""
-    text_lc = text.lower()
-    scores: dict[str, int] = {}
+_STEM_SUFFIXES = ("ations", "ating", "ated", "ation", "ies", "ied", "ying",
+                  "ing", "ed", "es", "s")
+
+
+def _stem(word: str) -> str:
+    """Crude English suffix-stripper. Returns the word unchanged if no suffix
+    matches or the stem would be too short."""
+    w = word.lower()
+    for suffix in _STEM_SUFFIXES:
+        if len(w) > len(suffix) + 3 and w.endswith(suffix):
+            return w[: -len(suffix)]
+    return w
+
+
+def suggest_topic(title: str, body: str) -> str:
+    """Score topics by keyword frequency. Title hits dominate (20x); longer
+    keywords count more so specific terms beat generic single words. Topic
+    name appearing in the title is a strong dedicated bonus. Single-word
+    keywords match their stem so 'bifurcation' catches 'bifurcated'."""
+    title_lc = (title or "").lower()
+    body_lc = (body or "").lower()
+    scores: dict[str, float] = {}
     for topic, meta in load_topics().items():
-        score = 0
+        score = 0.0
         for kw in meta.get("keywords", []):
-            if kw.lower() in text_lc:
-                score += 1
+            kw_lc = kw.lower().strip()
+            if not kw_lc:
+                continue
+            # Single-word keywords match the stem; multi-word stay literal
+            matcher = _stem(kw_lc) if (" " not in kw_lc and "-" not in kw_lc) else kw_lc
+            kw_weight = max(len(kw_lc), 1)
+            score += title_lc.count(matcher) * kw_weight * 20.0
+            score += body_lc.count(matcher) * kw_weight
+        # Topic name in title (stem-aware prefix match for longer names)
+        topic_lc = topic.lower()
+        if len(topic_lc) >= 6:
+            pattern = r"\b" + re.escape(_stem(topic_lc))
+        else:
+            pattern = r"\b" + re.escape(topic_lc) + r"\b"
+        if re.search(pattern, title_lc):
+            score += 50.0
         if score > 0:
             scores[topic] = score
     if not scores:
         return "_uncategorized"
-    return max(scores, key=lambda k: scores[k])
+    best = max(scores, key=lambda k: scores[k])
+    logger.info("Topic scores: %s -> %s",
+                {k: round(v, 1) for k, v in sorted(scores.items(), key=lambda x: -x[1])[:5]},
+                best)
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -204,13 +240,123 @@ def extract_first_pages_text(pdf_path: Path, n: int = 2) -> str:
         return ""
 
 
+def extract_abstract_heuristic(text: str) -> str:
+    """Find the abstract section in raw PDF text. Used when CrossRef has none."""
+    if not text:
+        return ""
+
+    start = -1
+
+    # 1) "Abstract" / "Summary" as a section heading on its own line
+    m = re.search(r"(?:^|\n)\s*(?:abstract|summary)\s*[:.]?\s*\n", text, re.IGNORECASE)
+    if m:
+        start = m.end()
+
+    # 2) "Abstract" / "Summary" followed by capitalized body text
+    if start < 0:
+        m = re.search(r"\b(?:abstract|summary)\s+(?=[A-Z])", text)
+        if m:
+            start = m.end()
+
+    # 3) Structured abstract — starts with Background/Objective/Aims/etc.
+    if start < 0:
+        m = re.search(
+            r"\b(background|objectives?|aims?|context|purpose|rationale)\s*[—–\-:]\s*",
+            text, re.IGNORECASE,
+        )
+        if m:
+            start = m.start()  # include the section label
+
+    # 4) Fallback: any standalone "abstract" or "summary"
+    if start < 0:
+        m = re.search(r"\b(?:abstract|summary)\b", text, re.IGNORECASE)
+        if m:
+            start = m.end()
+
+    if start < 0:
+        logger.info("Abstract heuristic: no anchor in %d chars", len(text))
+        return ""
+
+    rest = text[start:start + 4500]
+    end_patterns = [
+        r"\n\s*\d+\.?\s*introduction\b",
+        r"\n\s*introduction\s*\n",
+        r"\bkey\s*words?\s*:",
+        r"\bkeywords?\s*:",
+        r"\n\s*\d+\s*\|\s*introduction",
+        r"\n\s*©\s*\d{4}",  # copyright line often follows abstract
+    ]
+    end_pos = len(rest)
+    for pat in end_patterns:
+        em = re.search(pat, rest, re.IGNORECASE)
+        if em and em.start() > 120:
+            end_pos = min(end_pos, em.start())
+
+    abstract = rest[:end_pos].strip()
+    abstract = re.sub(r"\s+", " ", abstract).strip()
+    if len(abstract) > 2500:
+        abstract = abstract[:2500].rstrip() + "..."
+    logger.info("Abstract heuristic: text=%d, extracted=%d", len(text), len(abstract))
+    return abstract
+
+
 def find_doi(text: str) -> str | None:
+    if not text:
+        return None
     m = DOI_REGEX.search(text)
     if not m:
+        # Whitespace-split DOI: anchor on a "doi:" or "doi.org/" prefix
+        anchor = re.search(
+            r"(?:doi[:\s]*|doi\.org[/]|dx\.doi\.org[/])",
+            text, re.IGNORECASE,
+        )
+        if anchor:
+            tail = text[anchor.end():anchor.end() + 120]
+            compact = re.sub(r"\s+", "", tail)
+            m = DOI_REGEX.search(compact)
+    if not m:
         return None
-    # Strip trailing punctuation that often gets glued to the DOI
     doi = m.group(0).rstrip(".,;)")
+    for ext in (".pdf", ".PDF", ".Pdf"):
+        if doi.endswith(ext):
+            doi = doi[: -len(ext)]
+            break
     return doi
+
+
+def find_doi_in_filename(filename: str | None) -> str | None:
+    """Some publishers encode the DOI in the filename, with @ replacing /."""
+    if not filename:
+        return None
+    stem = filename.rsplit(".", 1)[0]
+    return find_doi(stem.replace("@", "/"))
+
+
+def find_doi_in_metadata(pdf_path: Path) -> str | None:
+    """Look for a DOI in the PDF's /Info and XMP metadata."""
+    try:
+        reader = PdfReader(str(pdf_path))
+        if reader.metadata:
+            for key in ("/Subject", "/Keywords", "/Title", "/doi", "/DOI"):
+                val = reader.metadata.get(key)
+                if val:
+                    found = find_doi(str(val))
+                    if found:
+                        return found
+        xmp = reader.xmp_metadata
+        if xmp:
+            for attr in ("dc_identifier", "prism_doi", "prism_url"):
+                val = getattr(xmp, attr, None)
+                if not val:
+                    continue
+                values = val if isinstance(val, (list, tuple)) else [val]
+                for v in values:
+                    found = find_doi(str(v))
+                    if found:
+                        return found
+    except Exception as e:
+        logger.warning("PDF metadata DOI extraction failed: %s", e)
+    return None
 
 
 def crossref_lookup(doi: str) -> dict | None:
@@ -361,6 +507,25 @@ class TopicSyncRequest(BaseModel):
     mode: Literal["update", "reset"]
 
 
+class ArticleEditRequest(BaseModel):
+    author: str | None = None
+    title: str | None = None
+    journal: str | None = None
+    year: int | None = None
+    doi: str | None = None
+    topic: str | None = None
+    abstract: str | None = None
+    tags: str | None = None
+
+
+class RefreshMetadataRequest(BaseModel):
+    only_missing: bool = True
+
+
+class ReclassifyRequest(BaseModel):
+    apply: bool = False
+
+
 # ----- Routes: setup -----
 
 @app.get("/api/config")
@@ -395,9 +560,30 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
     content = await file.read()
     temp_path.write_bytes(content)
 
-    # Extract text and try DOI
+    # Extract text and gather DOI candidates (text + PDF metadata + filename)
     text = extract_first_pages_text(temp_path)
-    doi = find_doi(text)
+    text_doi = find_doi(text)
+    meta_doi = find_doi_in_metadata(temp_path)
+    fn_doi = find_doi_in_filename(file.filename)
+
+    # Try each candidate against CrossRef — first that resolves wins
+    doi: str | None = None
+    cr: dict | None = None
+    seen: set[str] = set()
+    for candidate in (text_doi, meta_doi, fn_doi):
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result = crossref_lookup(candidate)
+        if result:
+            doi = candidate
+            cr = result
+            break
+    # Surface a DOI even if it didn't resolve, so the user sees what we found
+    if not doi:
+        doi = text_doi or meta_doi or fn_doi
+    logger.info("DOI: text=%s, meta=%s, filename=%s, resolved=%s",
+                text_doi, meta_doi, fn_doi, doi if cr else None)
 
     meta: dict[str, Any] = {
         "doi": None, "author": "", "title": "", "journal": "",
@@ -405,11 +591,13 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
     }
     source = "manual"
 
-    if doi:
-        cr = crossref_lookup(doi)
-        if cr:
-            meta = cr
-            source = "crossref"
+    if cr:
+        meta = cr
+        source = "crossref"
+
+    # If no abstract from CrossRef, try a heuristic on the PDF text
+    if not meta.get("abstract"):
+        meta["abstract"] = extract_abstract_heuristic(text)
 
     # Check duplicate
     duplicate = False
@@ -421,7 +609,8 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
             duplicate = row is not None
 
     suggested_topic = suggest_topic(
-        f"{meta.get('title','')} {meta.get('abstract','')} {text[:1500]}"
+        meta.get("title", ""),
+        f"{meta.get('abstract', '')} {text[:2000]}",
     )
 
     return {
@@ -434,6 +623,29 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
         "duplicate": duplicate,
         "topics": list(load_topics().keys()) + ["_uncategorized"],
     }
+
+
+@app.post("/api/extract_abstract/{temp_id}")
+def post_extract_abstract(temp_id: str) -> dict:
+    """Re-run abstract extraction on a staged PDF (manual button in the UI)."""
+    if "/" in temp_id or ".." in temp_id:
+        raise HTTPException(400, "Invalid temp_id")
+    path = STAGING / temp_id
+    if not path.exists():
+        raise HTTPException(404, "Staged file not found")
+    text = extract_first_pages_text(path, n=3)
+    abstract = extract_abstract_heuristic(text)
+    return {"abstract": abstract, "text_chars": len(text)}
+
+
+@app.post("/api/discard/{temp_id}")
+def post_discard(temp_id: str) -> dict:
+    """Delete a staged temp file (user discarded the card)."""
+    if "/" in temp_id or ".." in temp_id:
+        raise HTTPException(400, "Invalid temp_id")
+    path = STAGING / temp_id
+    path.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 @app.post("/api/lookup_doi")
@@ -459,7 +671,7 @@ def post_lookup_doi(payload: dict) -> dict:
         ).fetchone()
         duplicate = row is not None
 
-    suggested = suggest_topic(f"{cr.get('title','')} {cr.get('abstract','')}")
+    suggested = suggest_topic(cr.get("title", ""), cr.get("abstract", ""))
     return {"ok": True, "metadata": cr, "duplicate": duplicate,
             "suggested_topic": suggested}
 
@@ -549,6 +761,20 @@ def get_article(article_id: int) -> dict:
     return dict(row)
 
 
+@app.get("/staged/{temp_id}")
+def get_staged_pdf(temp_id: str) -> FileResponse:
+    if "/" in temp_id or ".." in temp_id:
+        raise HTTPException(400, "Invalid temp_id")
+    path = STAGING / temp_id
+    if not path.exists():
+        raise HTTPException(404, "Staged file not found")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline"},
+    )
+
+
 @app.get("/pdf/{article_id}")
 def get_pdf(article_id: int) -> FileResponse:
     with db() as conn:
@@ -559,7 +785,11 @@ def get_pdf(article_id: int) -> FileResponse:
     path = library_root() / row["topic"] / row["filename"]
     if not path.exists():
         raise HTTPException(404, "PDF missing on disk")
-    return FileResponse(path, media_type="application/pdf")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 # ----- Routes: topics CRUD -----
@@ -696,6 +926,193 @@ def delete_article(article_id: int) -> dict:
     pdf.unlink(missing_ok=True)
     regenerate_library_md()
     return {"ok": True}
+
+
+# ----- Routes: edit & bulk maintenance -----
+
+@app.patch("/api/article/{article_id}")
+def patch_article(article_id: int, req: ArticleEditRequest) -> dict:
+    """Update fields of an existing article. Moves the file if topic or
+    naming-relevant fields change."""
+    updates = req.model_dump(exclude_none=True)
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM articles WHERE id = ?", (article_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Not found")
+        current = dict(row)
+
+    merged = {**current, **updates}
+    root = library_root()
+    old_path = root / current["topic"] / current["filename"]
+
+    # Recompute filename if author/title/journal/year changed
+    rename_fields = ("author", "title", "journal", "year")
+    needs_rename = any(
+        k in updates and updates[k] != current[k] for k in rename_fields
+    )
+    new_filename = make_filename(merged) if needs_rename else current["filename"]
+
+    topic_changed = merged["topic"] != current["topic"]
+    new_topic_dir = root / merged["topic"]
+    new_topic_dir.mkdir(exist_ok=True)
+
+    if topic_changed or needs_rename:
+        new_path = unique_path(new_topic_dir, new_filename)
+        if old_path.exists():
+            shutil.move(str(old_path), str(new_path))
+        final_filename = new_path.name
+    else:
+        final_filename = current["filename"]
+
+    with db() as conn:
+        conn.execute(
+            """UPDATE articles SET
+                 author = ?, title = ?, journal = ?, year = ?, doi = ?,
+                 topic = ?, filename = ?, abstract = ?, tags = ?
+               WHERE id = ?""",
+            (merged["author"], merged["title"], merged["journal"], merged["year"],
+             merged["doi"], merged["topic"], final_filename,
+             merged["abstract"], merged["tags"], article_id),
+        )
+
+    regenerate_library_md()
+    return {"ok": True, "id": article_id, "filename": final_filename,
+            "topic": merged["topic"]}
+
+
+@app.post("/api/articles/refresh_metadata")
+def post_refresh_metadata(req: RefreshMetadataRequest) -> dict:
+    """Re-query CrossRef for every article with a DOI."""
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM articles").fetchall()]
+
+    updated = 0
+    skipped_no_doi = 0
+    failed = 0
+    for row in rows:
+        if not row.get("doi"):
+            skipped_no_doi += 1
+            continue
+        cr = crossref_lookup(row["doi"])
+        if not cr:
+            failed += 1
+            continue
+        new_values: dict[str, Any] = {}
+        for field in ("author", "title", "journal", "year", "abstract"):
+            cr_val = cr.get(field)
+            cur_val = row.get(field)
+            if cr_val and (not req.only_missing or not cur_val):
+                if cr_val != cur_val:
+                    new_values[field] = cr_val
+        if new_values:
+            set_clause = ", ".join(f"{k} = ?" for k in new_values)
+            params = list(new_values.values()) + [row["id"]]
+            with db() as conn:
+                conn.execute(
+                    f"UPDATE articles SET {set_clause} WHERE id = ?", params,
+                )
+            updated += 1
+
+    if updated > 0:
+        regenerate_library_md()
+    return {
+        "ok": True, "total": len(rows), "updated": updated,
+        "skipped_no_doi": skipped_no_doi, "failed": failed,
+    }
+
+
+@app.post("/api/articles/reclassify")
+def post_reclassify(req: ReclassifyRequest) -> dict:
+    """Re-run topic suggestion against every article. dry-run unless apply=true."""
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM articles").fetchall()]
+
+    changes: list[dict] = []
+    for row in rows:
+        suggested = suggest_topic(row.get("title") or "", row.get("abstract") or "")
+        if suggested != "_uncategorized" and suggested != row["topic"]:
+            changes.append({
+                "id": row["id"],
+                "title": row.get("title") or "",
+                "from_topic": row["topic"],
+                "to_topic": suggested,
+                "filename": row["filename"],
+            })
+
+    if not req.apply:
+        return {"ok": True, "preview": True, "changes": changes}
+
+    root = library_root()
+    applied = 0
+    for change in changes:
+        old_path = root / change["from_topic"] / change["filename"]
+        new_dir = root / change["to_topic"]
+        new_dir.mkdir(exist_ok=True)
+        new_path = unique_path(new_dir, change["filename"])
+        if old_path.exists():
+            shutil.move(str(old_path), str(new_path))
+        with db() as conn:
+            conn.execute(
+                "UPDATE articles SET topic = ?, filename = ? WHERE id = ?",
+                (change["to_topic"], new_path.name, change["id"]),
+            )
+        applied += 1
+
+    if applied > 0:
+        regenerate_library_md()
+    return {"ok": True, "applied": applied, "changes": changes}
+
+
+# ----- Routes: app self-update -----
+
+def _git(*args: str) -> tuple[int, str, str]:
+    import subprocess
+    result = subprocess.run(
+        ["git", *args], cwd=str(APP_DIR),
+        capture_output=True, text=True, timeout=30,
+    )
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+@app.post("/api/app/check_updates")
+def post_check_updates() -> dict:
+    """Return whether the project repo has a remote and how many commits behind it is."""
+    if not (APP_DIR / ".git").exists():
+        return {"ok": False, "reason": "Project is not a git repository"}
+    code, remotes, _ = _git("remote", "-v")
+    if code != 0 or not remotes:
+        return {"ok": False, "reason": "No git remote configured. "
+                "Run `git remote add origin <url>` to enable updates."}
+    # Refresh remote refs (non-fatal if it fails — could be offline)
+    _git("fetch", "--quiet")
+    # Find the current branch's upstream
+    code, upstream, _ = _git("rev-parse", "--abbrev-ref", "@{u}")
+    if code != 0:
+        return {"ok": False, "reason": "Current branch has no upstream configured. "
+                "Run `git push -u origin <branch>` once."}
+    code, behind, _ = _git("rev-list", "HEAD..@{u}", "--count")
+    if code != 0:
+        return {"ok": False, "reason": "Could not compare with upstream"}
+    behind_n = int(behind or 0)
+    return {
+        "ok": True,
+        "updates_available": behind_n > 0,
+        "commits_behind": behind_n,
+        "upstream": upstream,
+    }
+
+
+@app.post("/api/app/update")
+def post_app_update() -> dict:
+    """Run `git pull --ff-only` to apply available updates."""
+    if not (APP_DIR / ".git").exists():
+        raise HTTPException(400, "Project is not a git repository")
+    code, out, err = _git("pull", "--ff-only")
+    if code != 0:
+        raise HTTPException(400, err or out or "git pull failed")
+    return {"ok": True, "output": out, "restart_required": True}
 
 
 # ----- Static frontend -----
