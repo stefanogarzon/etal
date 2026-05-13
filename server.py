@@ -706,3 +706,4 @@ def index() -> HTMLResponse:
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+app.mount("/icons", StaticFiles(directory=APP_DIR / "icons"), name="icons")

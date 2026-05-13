@@ -1,0 +1,22 @@
+<svg viewBox="0 0 680 680" width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+  <title>Et al. — paper being filed</title>
+  <desc>A scientific paper with the et al. signature being filed into a library slot.</desc>
+  <rect width="680" height="680" rx="140" fill="#ede4d0"/>
+  <g transform="rotate(-3 340 350)">
+    <rect x="200" y="110" width="280" height="450" rx="4" fill="#fefcf6" stroke="#2a2520" stroke-width="6"/>
+    <rect x="232" y="160" width="200" height="14" rx="2" fill="#b34a2a"/>
+    <rect x="232" y="190" width="156" height="7" rx="1" fill="#b8aa92"/>
+    <rect x="232" y="232" width="216" height="5" rx="1" fill="#c4b9a4"/>
+    <rect x="232" y="250" width="208" height="5" rx="1" fill="#c4b9a4"/>
+    <rect x="232" y="268" width="216" height="5" rx="1" fill="#c4b9a4"/>
+    <rect x="232" y="286" width="184" height="5" rx="1" fill="#c4b9a4"/>
+    <rect x="232" y="304" width="216" height="5" rx="1" fill="#c4b9a4"/>
+    <text x="340" y="395" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="48" fill="#2a2520">et al.</text>
+  </g>
+  <rect x="50" y="450" width="580" height="170" rx="18" fill="#2a2520"/>
+  <rect x="50" y="450" width="580" height="7" fill="#fefcf6" opacity="0.18"/>
+  <line x1="170" y1="498" x2="170" y2="600" stroke="#5a4d40" stroke-width="2.5"/>
+  <line x1="290" y1="498" x2="290" y2="600" stroke="#5a4d40" stroke-width="2.5"/>
+  <line x1="390" y1="498" x2="390" y2="600" stroke="#5a4d40" stroke-width="2.5"/>
+  <line x1="510" y1="498" x2="510" y2="600" stroke="#5a4d40" stroke-width="2.5"/>
+</svg>

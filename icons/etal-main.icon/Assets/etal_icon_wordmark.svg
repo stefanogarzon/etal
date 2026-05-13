@@ -1,0 +1,7 @@
+<svg viewBox="0 0 680 680" width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+  <title>Et al. wordmark</title>
+  <desc>The text et al. as an italic serif wordmark on a dark background.</desc>
+  <rect width="680" height="680" rx="140" fill="#2a2520"/>
+  <text x="340" y="400" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="220" fill="#ede4d0">et al.</text>
+  <rect x="180" y="446" width="320" height="8" rx="2" fill="#b34a2a"/>
+</svg>

@@ -130,9 +130,27 @@ input:focus, select:focus, textarea:focus {
   width: 460px; max-width: 90vw; }
 .modal h3 { margin-top: 0; }
 .modal .actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Splash */
+.splash { position: fixed; inset: 0; z-index: 1000; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; transition: opacity 0.6s ease; }
+.splash.hide { opacity: 0; pointer-events: none; }
+.splash img { width: 260px; height: 260px; object-fit: contain;
+  filter: drop-shadow(0 4px 18px rgba(0,0,0,0.08)); }
+.splash-handle { color: var(--muted); font-size: 13px; letter-spacing: 0.3px; }
+.splash-motto { color: var(--text); font-style: italic; font-size: 17px;
+  font-family: Georgia, "Times New Roman", serif; }
 </style>
 </head>
 <body>
+
+<!-- Splash -->
+<div class="splash" id="splash">
+  <img src="/icons/etal-badge.png" alt="Et al.">
+  <div class="splash-handle">@stefanogarzon</div>
+  <div class="splash-motto">Your papers...and everyone else's.</div>
+</div>
 
 <div class="app" id="app">
   <!-- Tabs -->
@@ -494,7 +512,7 @@ async function openArticle(id, el) {
       </div>
       <button class="ghost danger" id="delete-article-btn">Delete</button>
     </div>
-    <embed src="/pdf/${id}" type="application/pdf">
+    <iframe src="/pdf/${id}" title="${a.title}"></iframe>
   `;
   $('#delete-article-btn').onclick = async () => {
     if (!confirm(`Delete "${a.title}"?`)) return;
@@ -617,6 +635,14 @@ async function deleteTopic(name) {
     toast('Deleted'); loadTopics(); loadTopicsForFilter();
   } catch (e) { toast(e.message, true); }
 }
+
+// ---------- splash ----------
+setTimeout(() => {
+  const s = $('#splash');
+  if (!s) return;
+  s.classList.add('hide');
+  setTimeout(() => s.remove(), 700);
+}, 5000);
 
 // ---------- boot ----------
 init();
