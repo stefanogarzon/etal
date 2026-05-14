@@ -41,7 +41,7 @@ from pypdf import PdfReader
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 APP_DIR = Path(__file__).parent
@@ -171,16 +171,54 @@ def topics_path(root: Path | None = None) -> Path:
     return (root or library_root()) / "topics.yaml"
 
 
+_pack_backfill_done = False
+
+
 def load_topics(root: Path | None = None) -> dict[str, dict]:
+    global _pack_backfill_done
     p = topics_path(root)
     if not p.exists():
         return {}
     data = yaml.safe_load(p.read_text()) or {}
-    return data.get("topics", {})
+    topics = data.get("topics", {})
+    if root is None and not _pack_backfill_done:
+        _pack_backfill_done = True
+        if _backfill_packs(topics):
+            save_topics(topics)
+    return topics
 
 
 def save_topics(topics: dict[str, dict]) -> None:
     topics_path().write_text(yaml.safe_dump({"topics": topics}, sort_keys=True))
+
+
+def _backfill_packs(topics: dict[str, dict]) -> bool:
+    """Assign `pack:` to legacy topics (without provenance) by matching
+    their names against the available packs' YAMLs.
+
+    Only assigns when the topic name appears in EXACTLY ONE pack — ambiguous
+    matches are left unassigned (the user can decide).
+    """
+    pack_membership: dict[str, list[str]] = {}
+    for pack_info in list_available_packs():
+        slug = pack_info["slug"]
+        pack = load_pack(slug)
+        if not pack:
+            continue
+        for tname in pack.get("topics", {}):
+            pack_membership.setdefault(tname, []).append(slug)
+
+    changed = 0
+    for tname, meta in topics.items():
+        if meta.get("pack"):
+            continue
+        candidates = pack_membership.get(tname, [])
+        if len(candidates) == 1:
+            meta["pack"] = candidates[0]
+            changed += 1
+    if changed:
+        logger.info("Backfilled pack: provenance for %d topic(s)", changed)
+    return changed > 0
 
 
 def list_available_packs() -> list[dict]:
@@ -844,10 +882,13 @@ def post_save(req: SaveRequest) -> dict:
 # ----- Routes: query -----
 
 @app.get("/api/articles")
-def get_articles(q: str | None = None, topic: str | None = None) -> list[dict]:
+def get_articles(
+    q: str | None = None,
+    topic: str | None = None,
+    packs: str | None = None,
+) -> list[dict]:
     sql = "SELECT a.* FROM articles a"
     params: list[Any] = []
-    where: list[str] = []
 
     if q:
         # FTS5 query — escape quotes
@@ -862,6 +903,19 @@ def get_articles(q: str | None = None, topic: str | None = None) -> list[dict]:
         sql += " AND " if "WHERE" in sql else " WHERE "
         sql += "a.topic = ?"
         params.append(topic)
+    if packs:
+        wanted = {s.strip() for s in packs.split(",") if s.strip()}
+        all_topics = load_topics()
+        in_pack_topics = [
+            name for name, meta in all_topics.items()
+            if (meta.get("pack") or "") in wanted
+        ]
+        if not in_pack_topics:
+            return []
+        placeholders = ",".join("?" * len(in_pack_topics))
+        sql += " AND " if "WHERE" in sql else " WHERE "
+        sql += f"a.topic IN ({placeholders})"
+        params.extend(in_pack_topics)
 
     sql += " ORDER BY a.added_at DESC LIMIT 500"
 

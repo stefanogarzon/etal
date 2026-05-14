@@ -55,6 +55,15 @@ input:focus, select:focus, textarea:focus {
 .setup-badge { width: 160px; height: 160px; object-fit: contain; }
 .setup-credit { color: var(--muted); font-size: 11px; margin-top: 24px; opacity: 0.7; }
 
+.pack-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pack-chips-label { font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px; }
+.pack-chip { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px;
+  font-size: 12px; cursor: pointer; background: var(--panel); color: var(--muted); }
+.pack-chip:hover { background: var(--hover); }
+.pack-chip.active { background: var(--accent-soft); color: var(--accent);
+  border-color: var(--accent); }
+
 /* Layout */
 .app { display: flex; flex-direction: column; height: 100vh; }
 .tabs { display: flex; gap: 4px; padding: 8px 16px; background: var(--panel);
@@ -250,6 +259,7 @@ input:focus, select:focus, textarea:focus {
         <div class="search-box">
           <input type="text" id="search-input" placeholder="Search title, abstract, author...">
           <select id="topic-filter"><option value="">All topics</option></select>
+          <div id="pack-chips" class="pack-chips" style="display:none"></div>
         </div>
         <div class="results" id="results"></div>
       </div>
@@ -609,6 +619,8 @@ function manualLookup(card) {
 }
 
 // ---------- library ----------
+const selectedPacks = new Set();
+
 async function loadTopicsForFilter() {
   try {
     const r = await api('/api/topics');
@@ -625,7 +637,46 @@ async function loadTopicsForFilter() {
       opt.value = '_uncategorized'; opt.textContent = `_uncategorized (${unc})`;
       sel.appendChild(opt);
     }
+    // Pack chips: detect installed packs from topics' pack: field
+    const installedPacks = new Set();
+    for (const meta of Object.values(r.topics)) {
+      if (meta && meta.pack) installedPacks.add(meta.pack);
+    }
+    renderPackChips(Array.from(installedPacks).sort());
   } catch {}
+}
+
+function renderPackChips(packSlugs) {
+  const wrap = $('#pack-chips');
+  if (packSlugs.length === 0) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    selectedPacks.clear();
+    return;
+  }
+  wrap.style.display = 'flex';
+  wrap.innerHTML = '<span class="pack-chips-label">Packs</span>';
+  // Drop any selected packs that no longer exist
+  for (const s of Array.from(selectedPacks)) {
+    if (!packSlugs.includes(s)) selectedPacks.delete(s);
+  }
+  packSlugs.forEach(slug => {
+    const pack = availablePacks.find(p => p.slug === slug);
+    const chip = document.createElement('div');
+    chip.className = 'pack-chip' + (selectedPacks.has(slug) ? ' active' : '');
+    chip.textContent = pack ? pack.name : slug;
+    chip.onclick = () => {
+      if (selectedPacks.has(slug)) {
+        selectedPacks.delete(slug);
+        chip.classList.remove('active');
+      } else {
+        selectedPacks.add(slug);
+        chip.classList.add('active');
+      }
+      loadLibrary();
+    };
+    wrap.appendChild(chip);
+  });
 }
 
 let searchTimer;
@@ -641,6 +692,7 @@ async function loadLibrary() {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (topic) params.set('topic', topic);
+  if (selectedPacks.size > 0) params.set('packs', Array.from(selectedPacks).join(','));
   const articles = await api('/api/articles?' + params.toString());
   const list = $('#results');
   list.innerHTML = '';
@@ -769,7 +821,7 @@ async function openPackModal(mode) {
   const isReset = mode === 'reset';
   const warning = isReset
     ? `<p style="color:#b34a2a; font-size:13px;"><strong>Warning:</strong> Reset will DELETE all topics from your library and reinstall fresh from the selected packs. Customized keywords will be lost. PDFs and folders on disk stay intact but may become orphaned. This cannot be undone.</p>`
-    : `<p style="color:var(--muted); font-size:13px;">Install adds topics from selected packs. Existing topics and customizations are preserved. Conflicts get suffixed (e.g. <code>Imaging_mastology</code>).</p>`;
+    : '';
   showModal(`
     <h3>${isReset ? 'Reset to packs' : 'Install pack(s)'}</h3>
     ${warning}
