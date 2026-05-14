@@ -46,7 +46,7 @@ GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
-DEFAULT_TOPICS_FILE = APP_DIR / "topics.yaml"
+PACKS_DIR = APP_DIR / "packs"
 
 CONFIG_DIR = Path.home() / ".config" / "etal"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -138,28 +138,28 @@ def db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def init_library(path: Path) -> None:
-    """Create folder structure, DB, and seed topics.yaml on first run."""
+def init_library(path: Path, pack_slugs: list[str] | None = None) -> None:
+    """Create folder structure, DB, and seed topics from selected packs."""
     path.mkdir(parents=True, exist_ok=True)
     (path / "_uncategorized").mkdir(exist_ok=True)
-    (path / "_inbox").mkdir(exist_ok=True)  # quarantine for failed ingestion
+    (path / "_inbox").mkdir(exist_ok=True)
 
-    # Seed topics.yaml from default template if missing
     topics_file = path / "topics.yaml"
-    if not topics_file.exists():
-        shutil.copy(DEFAULT_TOPICS_FILE, topics_file)
+    library_topics: dict = {}
+    if pack_slugs:
+        library_topics, _added, _skipped = install_packs_into_topics(
+            {}, pack_slugs, mode="install"
+        )
+    topics_file.write_text(yaml.safe_dump({"topics": library_topics}, sort_keys=True))
 
-    # Create folders for each topic
-    for topic in load_topics(path).keys():
+    for topic in library_topics.keys():
         (path / topic).mkdir(exist_ok=True)
 
-    # Init DB
     conn = sqlite3.connect(path / "library.db")
     conn.executescript(SCHEMA)
     conn.commit()
     conn.close()
 
-    # Seed library.md
     (path / "library.md").write_text("# Et al.\n\n_Empty._\n")
 
 
@@ -181,6 +181,87 @@ def load_topics(root: Path | None = None) -> dict[str, dict]:
 
 def save_topics(topics: dict[str, dict]) -> None:
     topics_path().write_text(yaml.safe_dump({"topics": topics}, sort_keys=True))
+
+
+def list_available_packs() -> list[dict]:
+    """List all .yaml files in packs/ dir with their metadata."""
+    if not PACKS_DIR.exists():
+        return []
+    packs = []
+    for p in sorted(PACKS_DIR.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(p.read_text()) or {}
+            packs.append({
+                "slug": data.get("slug", p.stem),
+                "name": data.get("name", p.stem),
+                "description": data.get("description", ""),
+                "topic_count": len(data.get("topics", {})),
+            })
+        except Exception as e:
+            logger.warning("Could not load pack %s: %s", p, e)
+    return packs
+
+
+def load_pack(slug: str) -> dict | None:
+    """Load a single pack by slug."""
+    for p in PACKS_DIR.glob("*.yaml"):
+        data = yaml.safe_load(p.read_text()) or {}
+        if data.get("slug") == slug:
+            return data
+    return None
+
+
+def install_packs_into_topics(
+    library_topics: dict, pack_slugs: list[str], mode: str = "install"
+) -> tuple[dict, list[str], list[str]]:
+    """
+    Merge selected packs into the library topics dict.
+
+    mode='install': preserve existing topics; new pack topics get suffixed on conflict.
+    mode='reset': clear library_topics first; only inter-pack conflicts get suffixed.
+
+    Returns (new_topics_dict, added_names, skipped_names).
+    """
+    if mode == "reset":
+        library_topics = {}
+    else:
+        library_topics = dict(library_topics)
+
+    pack_data = {}
+    for slug in pack_slugs:
+        pack = load_pack(slug)
+        if pack:
+            pack_data[slug] = pack.get("topics", {})
+
+    all_names: dict[str, list[str]] = {}
+    for slug, topics in pack_data.items():
+        for name in topics:
+            all_names.setdefault(name, []).append(slug)
+    inter_conflicts = {n for n, slugs in all_names.items() if len(slugs) > 1}
+
+    added: list[str] = []
+    skipped: list[str] = []
+
+    for slug, topics in pack_data.items():
+        for topic_name, topic_data in topics.items():
+            if topic_name in inter_conflicts:
+                final_name = f"{topic_name}_{slug}"
+            elif topic_name in library_topics:
+                final_name = f"{topic_name}_{slug}"
+            else:
+                final_name = topic_name
+
+            if final_name in library_topics:
+                skipped.append(final_name)
+                continue
+
+            library_topics[final_name] = {
+                "keywords": list(topic_data.get("keywords", [])),
+                "pack": slug,
+            }
+            added.append(final_name)
+
+    return library_topics, added, skipped
 
 
 _STEM_SUFFIXES = ("ations", "ating", "ated", "ation", "ies", "ied", "ying",
@@ -487,6 +568,7 @@ app = FastAPI(title="Et al.")
 
 class SetupRequest(BaseModel):
     library_path: str
+    pack_slugs: list[str] = []
 
 
 class SaveRequest(BaseModel):
@@ -510,10 +592,6 @@ class TopicRename(BaseModel):
     old_name: str
     new_name: str
     keywords: list[str] = []
-
-
-class TopicSyncRequest(BaseModel):
-    mode: Literal["update", "reset"]
 
 
 class ArticleEditRequest(BaseModel):
@@ -546,9 +624,40 @@ def get_config() -> dict:
 @app.post("/api/setup")
 def post_setup(req: SetupRequest) -> dict:
     path = Path(req.library_path).expanduser().resolve()
-    init_library(path)
+    init_library(path, pack_slugs=req.pack_slugs)
     save_config({"library_path": str(path)})
     return {"ok": True, "library_path": str(path)}
+
+
+@app.get("/api/packs")
+def get_packs() -> dict:
+    return {"packs": list_available_packs()}
+
+
+class PackInstallRequest(BaseModel):
+    pack_slugs: list[str]
+    mode: str = "install"
+
+
+@app.post("/api/packs/install")
+def post_packs_install(req: PackInstallRequest) -> dict:
+    if req.mode not in ("install", "reset"):
+        raise HTTPException(400, "mode must be 'install' or 'reset'")
+    current = load_topics()
+    new_topics, added, skipped = install_packs_into_topics(
+        current, req.pack_slugs, mode=req.mode
+    )
+    save_topics(new_topics)
+    for t in added:
+        (library_root() / t).mkdir(exist_ok=True)
+    regenerate_library_md()
+    return {
+        "ok": True,
+        "mode": req.mode,
+        "added": added,
+        "skipped": skipped,
+        "total_topics": len(new_topics),
+    }
 
 
 # ----- Routes: ingestion -----
@@ -879,46 +988,6 @@ def delete_topic(name: str) -> dict:
     if folder.exists() and not any(folder.iterdir()):
         folder.rmdir()
     return {"ok": True}
-
-
-@app.post("/api/topics/sync")
-def post_topics_sync(req: TopicSyncRequest) -> dict:
-    """Sync the library's topics.yaml with the project's bundled pack."""
-    pack_data = yaml.safe_load(DEFAULT_TOPICS_FILE.read_text()) or {}
-    pack_topics: dict[str, dict] = pack_data.get("topics", {})
-    current = load_topics()
-
-    added: list[str] = []
-    kept: list[str] = []
-    removed: list[str] = []
-
-    if req.mode == "update":
-        merged = dict(current)
-        for name, meta in pack_topics.items():
-            if name in current:
-                kept.append(name)
-            else:
-                merged[name] = {"keywords": meta.get("keywords", [])}
-                added.append(name)
-        save_topics(merged)
-    else:  # reset
-        for name in pack_topics:
-            (kept if name in current else added).append(name)
-        for name in current:
-            if name not in pack_topics:
-                removed.append(name)
-        shutil.copy(DEFAULT_TOPICS_FILE, topics_path())
-
-    root = library_root()
-    for name in added:
-        (root / name).mkdir(exist_ok=True)
-
-    return {
-        "ok": True,
-        "added": sorted(added),
-        "kept": sorted(kept),
-        "removed": sorted(removed),
-    }
 
 
 # ----- Routes: delete article -----

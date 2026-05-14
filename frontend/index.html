@@ -38,6 +38,23 @@ input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--accent);
 }
 
+.pack-option {
+  display: block;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: var(--panel);
+}
+.pack-option:hover { background: var(--hover); }
+.pack-option.checked { border-color: var(--accent); background: var(--accent-soft); }
+.pack-option input { margin-right: 10px; }
+.pack-option .pack-name { font-weight: 500; }
+.pack-option .pack-desc { color: var(--muted); font-size: 12px; margin-top: 2px; margin-left: 24px; }
+.setup-badge { width: 160px; height: 160px; object-fit: contain; }
+.setup-credit { color: var(--muted); font-size: 11px; margin-top: 24px; opacity: 0.7; }
+
 /* Layout */
 .app { display: flex; flex-direction: column; height: 100vh; }
 .tabs { display: flex; gap: 4px; padding: 8px 16px; background: var(--panel);
@@ -194,13 +211,23 @@ input:focus, select:focus, textarea:focus {
   <!-- Setup view -->
   <div class="view active" id="setup-view">
     <div class="setup">
-      <h1>Et al.</h1>
-      <p style="color:var(--muted);margin-top:-8px;font-style:italic">Your papers and everyone else's.</p>
-      <p>Choose a folder where your library will live. PDFs, the database, and
-      the auto-generated <code>library.md</code> will be stored there.</p>
-      <button id="pick-folder-btn">Choose folder...</button>
-      <div class="path-display" id="path-display" style="display:none"></div>
-      <button id="confirm-setup-btn" style="display:none">Initialize library</button>
+      <img src="/icons/etal-badge.png" alt="Et al." class="setup-badge">
+      <p style="color:var(--muted); font-style: italic; margin-top: -8px;">Your papers and everyone else's.</p>
+
+      <div id="setup-step-1">
+        <p>Choose a folder where your library will live.</p>
+        <button id="pick-folder-btn">Choose folder...</button>
+        <div class="path-display" id="path-display" style="display:none"></div>
+        <button id="goto-packs-btn" style="display:none">Next: choose packs</button>
+      </div>
+
+      <div id="setup-step-2" style="display:none">
+        <p>Pick one or more starter packs. You can install more later from the Topics tab.</p>
+        <div id="pack-list" style="text-align:left; max-width:500px; margin: 16px auto;"></div>
+        <button id="confirm-setup-btn">Initialize library</button>
+      </div>
+
+      <div class="setup-credit">developed by @stefanogarzon</div>
     </div>
   </div>
 
@@ -271,14 +298,14 @@ input:focus, select:focus, textarea:focus {
     <div class="topics-view">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2>Topics</h2>
-        <button id="new-topic-btn">+ New topic</button>
+        <div style="display:flex; gap:8px;">
+          <button class="ghost" id="install-pack-btn">+ Install pack</button>
+          <button class="ghost danger" id="reset-packs-btn">Reset</button>
+          <button id="new-topic-btn">+ New topic</button>
+        </div>
       </div>
       <p style="color:var(--muted)">Topics map to folders inside your library.
         Keywords are used to suggest a topic when you drop a new PDF.</p>
-      <div style="display:flex; gap:8px; margin-bottom:12px;">
-        <button class="ghost" id="sync-update-btn">Update from project pack</button>
-        <button class="ghost" id="sync-reset-btn">Reset to project pack</button>
-      </div>
       <div id="topics-list"></div>
     </div>
   </div>
@@ -302,6 +329,23 @@ function toast(msg, isErr = false) {
   t.classList.toggle('error', isErr);
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+let availablePacks = [];
+async function loadAvailablePacks() {
+  try {
+    const r = await api('/api/packs');
+    availablePacks = r.packs || [];
+  } catch { availablePacks = []; }
+}
+function displayTopic(name) {
+  for (const p of availablePacks) {
+    const suffix = `_${p.slug}`;
+    if (name.endsWith(suffix) && name.length > suffix.length) {
+      return `${name.slice(0, -suffix.length)} (${p.name})`;
+    }
+  }
+  return name;
 }
 
 async function api(path, opts = {}) {
@@ -343,6 +387,7 @@ $$('.tab[data-view]').forEach(tab => {
 
 // ---------- setup ----------
 async function init() {
+  await loadAvailablePacks();
   const cfg = await api('/api/config');
   if (cfg.configured) {
     $('#setup-view').classList.remove('active');
@@ -355,31 +400,53 @@ async function init() {
 }
 
 let pickedPath = null;
+let pickedPacks = new Set();
+
 $('#pick-folder-btn').addEventListener('click', async () => {
-  // Use PyWebView native folder picker
+  let folder = null;
   if (window.pywebview && window.pywebview.api) {
-    const folder = await window.pywebview.api.pick_folder();
-    if (folder) {
-      pickedPath = folder;
-      $('#path-display').textContent = folder;
-      $('#path-display').style.display = 'block';
-      $('#confirm-setup-btn').style.display = 'inline-block';
-    }
+    folder = await window.pywebview.api.pick_folder();
   } else {
-    // Browser fallback — prompt
-    const p = prompt('Library folder path:');
-    if (p) {
-      pickedPath = p;
-      $('#path-display').textContent = p;
-      $('#path-display').style.display = 'block';
-      $('#confirm-setup-btn').style.display = 'inline-block';
-    }
+    folder = prompt('Library folder path:');
   }
+  if (folder) {
+    pickedPath = folder;
+    $('#path-display').textContent = folder;
+    $('#path-display').style.display = 'block';
+    $('#goto-packs-btn').style.display = 'inline-block';
+  }
+});
+
+$('#goto-packs-btn').addEventListener('click', async () => {
+  $('#setup-step-1').style.display = 'none';
+  $('#setup-step-2').style.display = 'block';
+  const r = await api('/api/packs');
+  const list = $('#pack-list');
+  list.innerHTML = '';
+  r.packs.forEach(p => {
+    const label = document.createElement('label');
+    label.className = 'pack-option';
+    label.innerHTML = `
+      <input type="checkbox" value="${p.slug}">
+      <span class="pack-name">${p.name}</span>
+      <span style="color:var(--muted); font-size:12px;"> · ${p.topic_count} topics</span>
+      <div class="pack-desc">${p.description || ''}</div>
+    `;
+    const cb = label.querySelector('input');
+    cb.onchange = () => {
+      if (cb.checked) { pickedPacks.add(p.slug); label.classList.add('checked'); }
+      else { pickedPacks.delete(p.slug); label.classList.remove('checked'); }
+    };
+    list.appendChild(label);
+  });
 });
 
 $('#confirm-setup-btn').addEventListener('click', async () => {
   try {
-    await api('/api/setup', { method: 'POST', body: { library_path: pickedPath } });
+    await api('/api/setup', {
+      method: 'POST',
+      body: { library_path: pickedPath, pack_slugs: Array.from(pickedPacks) }
+    });
     toast('Library initialized');
     location.reload();
   } catch (e) { toast(e.message, true); }
@@ -549,7 +616,7 @@ async function loadTopicsForFilter() {
     sel.innerHTML = '<option value="">All topics</option>';
     Object.keys(r.topics).sort().forEach(t => {
       const opt = document.createElement('option');
-      opt.value = t; opt.textContent = `${t} (${r.counts[t] || 0})`;
+      opt.value = t; opt.textContent = `${displayTopic(t)} (${r.counts[t] || 0})`;
       sel.appendChild(opt);
     });
     const unc = (r.counts['_uncategorized'] || 0);
@@ -587,7 +654,7 @@ async function loadLibrary() {
     div.innerHTML = `
       <div class="title">${a.title}</div>
       <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
-        <span style="color:var(--accent)">${a.topic}</span></div>`;
+        <span style="color:var(--accent)">${displayTopic(a.topic)}</span></div>`;
     div.onclick = () => openArticle(a.id, div);
     list.appendChild(div);
   }
@@ -601,7 +668,7 @@ async function openArticle(id, el) {
       <div>
         <h2>${a.title}</h2>
         <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
-          ${a.topic} ${a.doi ? '· ' + a.doi : ''}</div>
+          ${displayTopic(a.topic)} ${a.doi ? '· ' + a.doi : ''}</div>
       </div>
       <div style="display:flex; gap:6px;">
         <button class="ghost" id="edit-article-btn">Edit</button>
@@ -640,6 +707,7 @@ async function openArticle(id, el) {
 
 // ---------- topics CRUD ----------
 async function loadTopics() {
+  await loadAvailablePacks();
   const r = await api('/api/topics');
   const list = $('#topics-list');
   list.innerHTML = '';
@@ -647,7 +715,7 @@ async function loadTopics() {
     const row = document.createElement('div');
     row.className = 'topic-row';
     row.innerHTML = `
-      <strong>${name}</strong>
+      <strong>${displayTopic(name)}</strong>
       <div class="keywords">${(meta.keywords || []).join(', ') || '<em>no keywords</em>'}</div>
       <div class="count">${r.counts[name] || 0}</div>
       <div>
@@ -693,25 +761,57 @@ async function loadTopics() {
 
 $('#new-topic-btn').addEventListener('click', () => editTopic(null, []));
 
-$('#sync-update-btn').addEventListener('click', async () => {
-  if (!confirm('Add any new topics from the project pack? Your existing topics and customizations will be preserved.')) return;
-  try {
-    const r = await api('/api/topics/sync', { method: 'POST', body: { mode: 'update' } });
-    const n = r.added.length;
-    toast(n === 0 ? 'No new topics — already up to date'
-                  : `Added ${n} topic${n > 1 ? 's' : ''}`);
-    loadTopics(); loadTopicsForFilter();
-  } catch (e) { toast(e.message, true); }
-});
+$('#install-pack-btn').addEventListener('click', () => openPackModal('install'));
+$('#reset-packs-btn').addEventListener('click', () => openPackModal('reset'));
 
-$('#sync-reset-btn').addEventListener('click', async () => {
-  if (!confirm('This will replace your topics.yaml with the project pack. Customized keywords will be lost. Topic folders and articles on disk are NOT deleted, but topics removed from the pack will become orphaned. Continue?')) return;
-  try {
-    const r = await api('/api/topics/sync', { method: 'POST', body: { mode: 'reset' } });
-    toast(`Reset complete: +${r.added.length} ~${r.kept.length} -${r.removed.length}`);
-    loadTopics(); loadTopicsForFilter();
-  } catch (e) { toast(e.message, true); }
-});
+async function openPackModal(mode) {
+  const r = await api('/api/packs');
+  const isReset = mode === 'reset';
+  const warning = isReset
+    ? `<p style="color:#b34a2a; font-size:13px;"><strong>Warning:</strong> Reset will DELETE all topics from your library and reinstall fresh from the selected packs. Customized keywords will be lost. PDFs and folders on disk stay intact but may become orphaned. This cannot be undone.</p>`
+    : `<p style="color:var(--muted); font-size:13px;">Install adds topics from selected packs. Existing topics and customizations are preserved. Conflicts get suffixed (e.g. <code>Imaging_mastology</code>).</p>`;
+  showModal(`
+    <h3>${isReset ? 'Reset to packs' : 'Install pack(s)'}</h3>
+    ${warning}
+    <div id="modal-pack-list" style="margin: 12px 0;"></div>
+    <div class="actions">
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+      <button id="pack-modal-go" class="${isReset ? 'danger' : ''}">${isReset ? 'Reset library' : 'Install'}</button>
+    </div>
+  `);
+  const list = $('#modal-pack-list');
+  const picked = new Set();
+  r.packs.forEach(p => {
+    const label = document.createElement('label');
+    label.className = 'pack-option';
+    label.innerHTML = `
+      <input type="checkbox" value="${p.slug}">
+      <span class="pack-name">${p.name}</span>
+      <span style="color:var(--muted); font-size:12px;"> · ${p.topic_count} topics</span>
+      <div class="pack-desc">${p.description || ''}</div>
+    `;
+    const cb = label.querySelector('input');
+    cb.onchange = () => {
+      if (cb.checked) { picked.add(p.slug); label.classList.add('checked'); }
+      else { picked.delete(p.slug); label.classList.remove('checked'); }
+    };
+    list.appendChild(label);
+  });
+  $('#pack-modal-go').onclick = async () => {
+    if (picked.size === 0) { toast('Pick at least one pack', true); return; }
+    if (isReset && !confirm(`This will DELETE all current topics and reinstall from ${picked.size} pack(s). Are you sure?`)) return;
+    try {
+      const res = await api('/api/packs/install', {
+        method: 'POST',
+        body: { pack_slugs: Array.from(picked), mode }
+      });
+      toast(`${res.mode === 'reset' ? 'Reset' : 'Installed'}: +${res.added.length} topics${res.skipped.length ? `, ${res.skipped.length} skipped` : ''}`);
+      closeModal();
+      loadTopics();
+      loadTopicsForFilter();
+    } catch (e) { toast(e.message, true); }
+  };
+}
 
 function editTopic(oldName, keywords) {
   const isNew = !oldName;

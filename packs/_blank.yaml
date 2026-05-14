@@ -1,0 +1,21 @@
+name: Blank starter
+slug: blank
+description: Minimal scaffolding (To Read, Methods, Reviews). Customize from there.
+
+topics:
+  ToRead:
+    keywords:
+      - to read
+      - unsorted
+  Methods:
+    keywords:
+      - methodology
+      - methods paper
+      - statistical method
+      - study design
+  Reviews:
+    keywords:
+      - systematic review
+      - meta-analysis
+      - narrative review
+      - state of the art

@@ -1,0 +1,240 @@
+name: Mastology / Breast oncology
+slug: mastology
+description: Breast cancer screening, diagnosis, treatment, and survivorship.
+
+topics:
+  Screening:
+    keywords:
+      - mammography screening
+      - breast cancer screening
+      - screening mammogram
+      - dense breast
+      - tomosynthesis screening
+      - tmist
+      - supplemental screening
+      - risk-based screening
+  Imaging:
+    keywords:
+      - mammography
+      - tomosynthesis
+      - dbt
+      - breast mri
+      - breast ultrasound
+      - abus
+      - contrast-enhanced mammography
+      - cesm
+      - bi-rads
+      - birads
+  Pathology:
+    keywords:
+      - histopathology
+      - ductal carcinoma
+      - lobular carcinoma
+      - invasive carcinoma
+      - in situ
+      - ihc
+      - immunohistochemistry
+      - ki-67
+      - tumor grade
+      - lymphovascular invasion
+  DCIS:
+    keywords:
+      - ductal carcinoma in situ
+      - dcis
+      - intraductal carcinoma
+      - low-risk dcis
+      - lorrad
+      - loris
+      - comet trial
+  HRpositive:
+    keywords:
+      - hormone receptor positive
+      - er-positive
+      - er positive
+      - estrogen receptor
+      - luminal a
+      - luminal b
+      - endocrine sensitive
+  HER2:
+    keywords:
+      - her2-positive
+      - her2 positive
+      - her2-low
+      - her2 low
+      - trastuzumab
+      - pertuzumab
+      - t-dm1
+      - trastuzumab deruxtecan
+      - enhertu
+      - tucatinib
+  TNBC:
+    keywords:
+      - triple-negative
+      - triple negative
+      - tnbc
+      - basal-like
+      - pd-l1 breast
+      - pembrolizumab breast
+      - sacituzumab
+      - trodelvy
+  Genetics:
+    keywords:
+      - brca1
+      - brca2
+      - palb2
+      - chek2
+      - hereditary breast
+      - germline
+      - pathogenic variant
+      - genetic testing
+      - hboc
+  EarlyStage:
+    keywords:
+      - early breast cancer
+      - early-stage breast
+      - operable breast cancer
+      - stage i breast
+      - stage ii breast
+      - adjuvant therapy
+  Neoadjuvant:
+    keywords:
+      - neoadjuvant chemotherapy
+      - neoadjuvant therapy
+      - preoperative chemotherapy
+      - pathologic complete response
+      - pcr
+      - residual cancer burden
+      - rcb
+      - keynote-522
+  Metastatic:
+    keywords:
+      - metastatic breast cancer
+      - mbc
+      - advanced breast cancer
+      - first-line metastatic
+      - second-line metastatic
+      - paloma
+      - monaleesa
+      - monarch
+  CDK46:
+    keywords:
+      - cdk4/6
+      - cdk 4/6
+      - cdk46
+      - palbociclib
+      - ribociclib
+      - abemaciclib
+      - monarche
+      - natalee
+  Endocrine:
+    keywords:
+      - tamoxifen
+      - aromatase inhibitor
+      - letrozole
+      - anastrozole
+      - exemestane
+      - fulvestrant
+      - elacestrant
+      - serd
+      - oral serd
+  Chemotherapy:
+    keywords:
+      - anthracycline
+      - taxane
+      - capecitabine
+      - paclitaxel
+      - docetaxel
+      - carboplatin breast
+      - dose-dense
+      - adjuvant chemotherapy
+  Immunotherapy:
+    keywords:
+      - immune checkpoint
+      - pembrolizumab
+      - atezolizumab
+      - immunotherapy breast
+      - pd-1 breast
+      - pd-l1
+  Targeted:
+    keywords:
+      - parp inhibitor
+      - olaparib
+      - talazoparib
+      - alpelisib
+      - pi3k inhibitor
+      - akt inhibitor
+      - capivasertib
+      - antibody-drug conjugate
+      - adc
+  Surgery:
+    keywords:
+      - mastectomy
+      - breast-conserving
+      - lumpectomy
+      - oncoplastic
+      - sentinel lymph node
+      - axillary dissection
+      - alnd
+      - nipple-sparing
+      - skin-sparing
+      - margins
+  Reconstruction:
+    keywords:
+      - breast reconstruction
+      - implant-based
+      - autologous
+      - diep flap
+      - tram flap
+      - latissimus dorsi
+      - prepectoral
+      - tissue expander
+  Radiotherapy:
+    keywords:
+      - whole breast irradiation
+      - partial breast irradiation
+      - apbi
+      - hypofractionation
+      - regional nodal irradiation
+      - boost radiation
+      - postmastectomy radiation
+      - pmrt
+  Biomarkers:
+    keywords:
+      - oncotype
+      - mammaprint
+      - prosigna
+      - endopredict
+      - recurrence score
+      - ctdna breast
+      - liquid biopsy breast
+      - signatera
+  Survivorship:
+    keywords:
+      - breast cancer survivor
+      - survivorship
+      - quality of life
+      - lymphedema
+      - cancer-related fatigue
+      - cognitive impairment
+      - sexual health
+      - return to work
+  Prevention:
+    keywords:
+      - chemoprevention
+      - risk reduction
+      - prophylactic mastectomy
+      - risk-reducing
+      - lifestyle breast cancer
+      - exercise breast cancer
+  MaleBC:
+    keywords:
+      - male breast cancer
+      - men with breast
+      - male brca
+  Disparities:
+    keywords:
+      - racial disparities breast
+      - ethnic disparities
+      - access to care breast
+      - social determinants
+      - underserved breast cancer

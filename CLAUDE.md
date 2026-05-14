@@ -67,10 +67,14 @@ README.md
 - Frontend: no framework, no build. Plain `fetch()` against the same-origin API. Keep `index.html` self-contained.
 - Tests: there's no test suite yet. When adding logic, smoke-test via `TestClient` (see how server.py was validated initially).
 
-## Starter pack
-The bundled `topics.yaml` is a cardio interventional pack (18 topics). 
-When the project ships beyond personal use, this becomes one of several 
-area-specific packs the user picks at first run.
+## Starter packs
+The `packs/` directory contains pre-built topic taxonomies (cardio, mastology, blank).
+At first run, the user picks one or more packs via the setup screen. Selected packs are
+merged into the library's `topics.yaml` with per-topic `pack:` provenance.
+
+Additional packs can be installed (preserving existing topics) or reset (wipe + reinstall)
+from the Topics tab. Conflicts between packs (e.g. "Imaging" in two packs) are resolved by
+suffixing with the pack slug (`Imaging_mastology`); the UI displays these as "Imaging (Pack name)".
 
 ## Things explicitly NOT in v0.1
 

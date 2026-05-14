@@ -1,5 +1,6 @@
-# Et al. — starter pack: cardio interventional
-# Edit freely from the Topics tab in-app.
+name: Cardio (interventional)
+slug: cardio
+description: Interventional cardiology — IVUS, TAVR, ACS, PCI, and related topics.
 
 topics:
   ACS:
@@ -61,6 +62,16 @@ topics:
       - retrograde approach
       - antegrade dissection
       - j-cto
+  DCB:
+    keywords:
+      - drug-coated balloon
+      - drug coated balloon
+      - dcb
+      - paclitaxel-coated balloon
+      - sirolimus-coated balloon
+      - basket-small
+      - agent-ide
+      - in-stent restenosis
   FFR:
     keywords:
       - ffr
