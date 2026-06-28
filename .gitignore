@@ -21,3 +21,9 @@ env/
 build/
 dist/
 *.spec
+
+# Shared AI key — never commit
+groq_key.txt
+
+# Keep the hand-maintained macOS build spec
+!Et al..spec

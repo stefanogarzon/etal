@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -37,16 +38,28 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
 
+from llm import (
+    BUILTIN_ENABLED, BUILTIN_KEY, DEFAULT_MODEL, LLMError, llm_enabled,
+    suggest_topic_llm, summarize_text,
+)
+
 # ---------------------------------------------------------------------------
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.1.4"
+__version__ = "0.2.0"
 GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """Parse 'v1.2.3' / '1.2.3' into a comparable tuple. Non-numeric → (0,)."""
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(n) for n in nums) or (0,)
 
 APP_DIR = Path(__file__).parent
 FRONTEND_DIR = APP_DIR / "frontend"
 PACKS_DIR = APP_DIR / "packs"
+FIELDS_FILE = APP_DIR / "fields.yaml"
 
 CONFIG_DIR = Path.home() / ".config" / "etal"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -68,13 +81,13 @@ def set_window_ref(win: Any) -> None:
 
 def load_config() -> dict | None:
     if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text())
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     return None
 
 
 def save_config(cfg: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
 def library_root() -> Path:
@@ -99,6 +112,7 @@ CREATE TABLE IF NOT EXISTS articles (
     topic TEXT NOT NULL,
     filename TEXT NOT NULL,
     abstract TEXT,
+    summary TEXT,
     tags TEXT,
     added_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -127,10 +141,27 @@ END;
 """
 
 
+_schema_migrated = False
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Bring an existing library DB up to the current schema. Idempotent —
+    adds columns introduced after a library was first created."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(articles)").fetchall()}
+    if "summary" not in cols:
+        conn.execute("ALTER TABLE articles ADD COLUMN summary TEXT")
+        conn.commit()
+        logger.info("Migrated: added articles.summary column")
+
+
 @contextmanager
 def db() -> Iterator[sqlite3.Connection]:
+    global _schema_migrated
     conn = sqlite3.connect(library_root() / "library.db")
     conn.row_factory = sqlite3.Row
+    if not _schema_migrated:
+        _ensure_schema(conn)
+        _schema_migrated = True
     try:
         yield conn
         conn.commit()
@@ -138,8 +169,14 @@ def db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def init_library(path: Path, pack_slugs: list[str] | None = None) -> None:
-    """Create folder structure, DB, and seed topics from selected packs."""
+def init_library(
+    path: Path,
+    pack_slugs: list[str] | None = None,
+    fields: list[str] | None = None,
+) -> None:
+    """Create folder structure, DB, and seed topics. ``fields`` records the
+    library's declared specialties (AI classification scope); topics may start
+    empty and grow organically, or be seeded from optional packs."""
     path.mkdir(parents=True, exist_ok=True)
     (path / "_uncategorized").mkdir(exist_ok=True)
     (path / "_inbox").mkdir(exist_ok=True)
@@ -150,7 +187,10 @@ def init_library(path: Path, pack_slugs: list[str] | None = None) -> None:
         library_topics, _added, _skipped = install_packs_into_topics(
             {}, pack_slugs, mode="install"
         )
-    topics_file.write_text(yaml.safe_dump({"topics": library_topics}, sort_keys=True))
+    topics_file.write_text(yaml.safe_dump(
+        {"fields": list(fields or []), "topics": library_topics},
+        sort_keys=True, allow_unicode=True,
+    ), encoding="utf-8")
 
     for topic in library_topics.keys():
         (path / topic).mkdir(exist_ok=True)
@@ -160,7 +200,7 @@ def init_library(path: Path, pack_slugs: list[str] | None = None) -> None:
     conn.commit()
     conn.close()
 
-    (path / "library.md").write_text("# Et al.\n\n_Empty._\n")
+    (path / "library.md").write_text("# Et al.\n\n_Empty._\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +211,27 @@ def topics_path(root: Path | None = None) -> Path:
     return (root or library_root()) / "topics.yaml"
 
 
+def load_library_meta(root: Path | None = None) -> dict:
+    """The full topics.yaml document: {fields: [...], topics: {...}}."""
+    p = topics_path(root)
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+
+def load_fields(root: Path | None = None) -> list[str]:
+    """User-declared specialty fields for this library (AI classification
+    scope). Stored as display names, e.g. ['Cardiology', 'Oncology (medical)']."""
+    return list(load_library_meta(root).get("fields", []) or [])
+
+
+def save_fields(fields: list[str]) -> None:
+    data = load_library_meta()
+    data["fields"] = list(fields)
+    topics_path().write_text(
+        yaml.safe_dump(data, sort_keys=True, allow_unicode=True), encoding="utf-8")
+
+
 _pack_backfill_done = False
 
 
@@ -179,7 +240,7 @@ def load_topics(root: Path | None = None) -> dict[str, dict]:
     p = topics_path(root)
     if not p.exists():
         return {}
-    data = yaml.safe_load(p.read_text()) or {}
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     topics = data.get("topics", {})
     if root is None and not _pack_backfill_done:
         _pack_backfill_done = True
@@ -189,7 +250,44 @@ def load_topics(root: Path | None = None) -> dict[str, dict]:
 
 
 def save_topics(topics: dict[str, dict]) -> None:
-    topics_path().write_text(yaml.safe_dump({"topics": topics}, sort_keys=True))
+    # Preserve sibling metadata (e.g. fields) when rewriting topics.
+    data = load_library_meta()
+    data["topics"] = topics
+    topics_path().write_text(
+        yaml.safe_dump(data, sort_keys=True, allow_unicode=True), encoding="utf-8")
+
+
+def list_available_fields() -> list[dict]:
+    """The catalog of selectable specialty fields (from fields.yaml)."""
+    if not FIELDS_FILE.exists():
+        return []
+    try:
+        data = yaml.safe_load(FIELDS_FILE.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        logger.warning("Could not load fields.yaml: %s", e)
+        return []
+    return data.get("fields", []) or []
+
+
+def sanitize_topic(name: str) -> str:
+    """Make an LLM-proposed topic name safe to use as a folder name."""
+    name = (name or "").strip()
+    name = re.sub(r'[\\/:*?"<>|]', "", name)   # filesystem-reserved chars
+    name = re.sub(r"\s+", " ", name).strip().strip(".")
+    return name or "_uncategorized"
+
+
+def register_topic_if_new(name: str) -> None:
+    """Promote a brand-new topic (e.g. AI-proposed and confirmed on save) to a
+    first-class topic in topics.yaml. System folders ('_'-prefixed) are skipped.
+    Keeps the 'Topic = folder' invariant: every committed topic exists in YAML."""
+    if not name or name.startswith("_"):
+        return
+    topics = load_topics()
+    if name not in topics:
+        topics[name] = {"keywords": []}
+        save_topics(topics)
+        logger.info("Registered new topic '%s'", name)
 
 
 def _backfill_packs(topics: dict[str, dict]) -> bool:
@@ -228,7 +326,7 @@ def list_available_packs() -> list[dict]:
     packs = []
     for p in sorted(PACKS_DIR.glob("*.yaml")):
         try:
-            data = yaml.safe_load(p.read_text()) or {}
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             packs.append({
                 "slug": data.get("slug", p.stem),
                 "name": data.get("name", p.stem),
@@ -243,7 +341,7 @@ def list_available_packs() -> list[dict]:
 def load_pack(slug: str) -> dict | None:
     """Load a single pack by slug."""
     for p in PACKS_DIR.glob("*.yaml"):
-        data = yaml.safe_load(p.read_text()) or {}
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         if data.get("slug") == slug:
             return data
     return None
@@ -592,7 +690,7 @@ def regenerate_library_md() -> None:
             lines.append(entry)
         lines.append("")
 
-    (root / "library.md").write_text("\n".join(lines))
+    (root / "library.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +704,16 @@ app = FastAPI(title="Et al.")
 
 class SetupRequest(BaseModel):
     library_path: str
+    fields: list[str] = []
     pack_slugs: list[str] = []
+
+
+class FieldsRequest(BaseModel):
+    fields: list[str] = []
+
+
+class FolderRequest(BaseModel):
+    path: str
 
 
 class SaveRequest(BaseModel):
@@ -618,6 +725,7 @@ class SaveRequest(BaseModel):
     year: int | None = None
     topic: str
     abstract: str | None = None
+    summary: str | None = None
     tags: str | None = None
 
 
@@ -640,6 +748,7 @@ class ArticleEditRequest(BaseModel):
     doi: str | None = None
     topic: str | None = None
     abstract: str | None = None
+    summary: str | None = None
     tags: str | None = None
 
 
@@ -649,6 +758,17 @@ class RefreshMetadataRequest(BaseModel):
 
 class ReclassifyRequest(BaseModel):
     apply: bool = False
+
+
+class LLMSettings(BaseModel):
+    enabled: bool = False
+    api_key: str | None = None
+    model: str = DEFAULT_MODEL
+
+
+class SummarizeRequest(BaseModel):
+    title: str | None = None
+    abstract: str | None = None
 
 
 # ----- Routes: setup -----
@@ -662,9 +782,141 @@ def get_config() -> dict:
 @app.post("/api/setup")
 def post_setup(req: SetupRequest) -> dict:
     path = Path(req.library_path).expanduser().resolve()
-    init_library(path, pack_slugs=req.pack_slugs)
+    # If the folder already holds a library (e.g. picked a synced folder),
+    # open it instead of overwriting its topics/fields.
+    if _is_etal_library(path):
+        return post_open_library(FolderRequest(path=str(path)))
+    init_library(path, pack_slugs=req.pack_slugs, fields=req.fields)
     save_config({"library_path": str(path)})
     return {"ok": True, "library_path": str(path)}
+
+
+@app.get("/api/fields")
+def get_fields() -> dict:
+    """Catalog of selectable specialty fields + the ones this library uses."""
+    selected: list[str] = []
+    if load_config():
+        selected = load_fields()
+    return {"available": list_available_fields(), "selected": selected}
+
+
+@app.put("/api/library/fields")
+def put_library_fields(req: FieldsRequest) -> dict:
+    """Update the library's declared specialty fields (AI classification scope)."""
+    if not load_config():
+        raise HTTPException(400, "Library not configured")
+    save_fields(req.fields)
+    return {"ok": True, "fields": req.fields}
+
+
+# ----- Routes: library location / sync -----
+
+def _is_etal_library(path: Path) -> bool:
+    return (path / "library.db").exists()
+
+
+def _library_article_count(path: Path) -> int:
+    try:
+        conn = sqlite3.connect(path / "library.db")
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+        finally:
+            conn.close()
+        return int(n)
+    except Exception:
+        return 0
+
+
+def detect_cloud_roots() -> list[dict]:
+    """Best-effort detection of cloud-sync folders, so the user can keep the
+    library in a place that syncs across machines. Returns existing candidates
+    as {service, path, suggested} where suggested appends an 'EtAl' subfolder."""
+    home = Path.home()
+    candidates: list[tuple[str, Path]] = []
+
+    # Google Drive — desktop app mounts a virtual drive (often G:) with
+    # "My Drive"/"Meu Drive", or a classic ~/Google Drive folder.
+    if sys.platform == "win32":
+        for letter in "GHIJKLMNOPQDEF":
+            for leaf in ("My Drive", "Meu Drive"):
+                candidates.append(("Google Drive", Path(f"{letter}:/") / leaf))
+        candidates.append(("Google Drive", home / "Google Drive"))
+    elif sys.platform == "darwin":
+        cs = home / "Library" / "CloudStorage"
+        if cs.exists():
+            for d in cs.glob("GoogleDrive-*"):
+                candidates.append(("Google Drive", d / "My Drive"))
+        candidates.append(("Google Drive", home / "Google Drive"))
+
+    # Dropbox / OneDrive / iCloud
+    candidates.append(("Dropbox", home / "Dropbox"))
+    onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    if onedrive:
+        candidates.append(("OneDrive", Path(onedrive)))
+    candidates.append(("OneDrive", home / "OneDrive"))
+    if sys.platform == "darwin":
+        candidates.append(("iCloud Drive",
+                           home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"))
+    else:
+        candidates.append(("iCloud Drive", home / "iCloudDrive"))
+
+    seen: set[str] = set()
+    out: list[dict] = []
+    for service, p in candidates:
+        try:
+            if p.exists() and p.is_dir() and str(p) not in seen:
+                seen.add(str(p))
+                out.append({
+                    "service": service,
+                    "path": str(p),
+                    "suggested": str(p / "EtAl"),
+                })
+        except OSError:
+            continue
+    return out
+
+
+@app.get("/api/cloud_locations")
+def get_cloud_locations() -> dict:
+    """Detected cloud-sync folders to suggest as a library home."""
+    return {"locations": detect_cloud_roots()}
+
+
+@app.post("/api/inspect_folder")
+def post_inspect_folder(req: FolderRequest) -> dict:
+    """Tell the UI whether a chosen folder already holds an Et al. library
+    (so it can offer 'Open' instead of 'Create')."""
+    path = Path(req.path).expanduser().resolve()
+    exists = _is_etal_library(path)
+    info: dict[str, Any] = {
+        "path": str(path),
+        "is_library": exists,
+        "exists": path.exists(),
+    }
+    if exists:
+        info["article_count"] = _library_article_count(path)
+        try:
+            info["fields"] = load_fields(path)
+        except Exception:
+            info["fields"] = []
+    return info
+
+
+@app.post("/api/open_library")
+def post_open_library(req: FolderRequest) -> dict:
+    """Point the app at an existing library (e.g. a synced Google Drive folder
+    on another computer). Does NOT re-initialize — preserves topics/fields."""
+    global _schema_migrated
+    path = Path(req.path).expanduser().resolve()
+    if not _is_etal_library(path):
+        raise HTTPException(400, "No Et al. library found in that folder "
+                                 "(missing library.db).")
+    save_config({"library_path": str(path)})
+    _schema_migrated = False  # re-run migration against the opened library
+    with db() as conn:  # triggers _ensure_schema on the newly-opened DB
+        conn.execute("SELECT 1")
+    return {"ok": True, "library_path": str(path),
+            "article_count": _library_article_count(path)}
 
 
 @app.get("/api/packs")
@@ -764,10 +1016,38 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
             ).fetchone()
             duplicate = row is not None
 
-    suggested_topic = suggest_topic(
+    cfg = load_config()
+    topics_map = load_topics()
+
+    # Baseline: keyword heuristic (always available, offline).
+    kw_topic = suggest_topic(
         meta.get("title", ""),
         f"{meta.get('abstract', '')} {text[:2000]}",
     )
+    suggested_topic = kw_topic
+
+    # Optional AI layer — advisory. Prefers the model's pick when available;
+    # may propose a brand-new topic. Falls back silently to the keyword pick.
+    ai_block: dict[str, Any] = {"enabled": llm_enabled(cfg)}
+    ai = suggest_topic_llm(
+        cfg, meta.get("title", ""), meta.get("abstract", ""),
+        text[:3000], topics_map, fields=load_fields(),
+    )
+    if ai and ai.get("topic"):
+        proposed = ai["topic"]
+        if ai.get("is_new"):
+            proposed = sanitize_topic(proposed)
+        if proposed and proposed != "_uncategorized":
+            suggested_topic = proposed
+        ai_block.update(
+            topic=proposed,
+            is_new=bool(ai.get("is_new")) and proposed != "_uncategorized",
+            reason=ai.get("reason", ""),
+            confidence=ai.get("confidence"),
+        )
+    elif ai and ai.get("error"):
+        # AI call failed — fell back to the keyword pick. Tell the UI why.
+        ai_block["error"] = ai["error"]
 
     return {
         "temp_id": temp_id,
@@ -776,8 +1056,10 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
         "doi_found_in_pdf": doi,
         "metadata": meta,
         "suggested_topic": suggested_topic,
+        "keyword_topic": kw_topic,
+        "ai": ai_block,
         "duplicate": duplicate,
-        "topics": list(load_topics().keys()) + ["_uncategorized"],
+        "topics": list(topics_map.keys()) + ["_uncategorized"],
     }
 
 
@@ -792,6 +1074,38 @@ def post_extract_abstract(temp_id: str) -> dict:
     text = extract_first_pages_text(path, n=3)
     abstract = extract_abstract_heuristic(text)
     return {"abstract": abstract, "text_chars": len(text)}
+
+
+def _http_from_llm_error(e: LLMError) -> HTTPException:
+    """Map a failed Groq call to a user-facing HTTP error (toasted as-is)."""
+    if e.reason == "rate_limited":
+        return HTTPException(
+            429, "Groq rate limit reached — wait a moment and try again, "
+                 "or add your own key in Tools."
+        )
+    if e.reason == "auth":
+        return HTTPException(400, "Groq rejected the API key — check it in Tools.")
+    return HTTPException(502, "Groq request failed — try again in a moment.")
+
+
+@app.post("/api/summarize/{temp_id}")
+def post_summarize_staged(temp_id: str, req: SummarizeRequest) -> dict:
+    """AI summary of a staged (not-yet-saved) PDF, for the ingestion card."""
+    if "/" in temp_id or ".." in temp_id:
+        raise HTTPException(400, "Invalid temp_id")
+    path = STAGING / temp_id
+    if not path.exists():
+        raise HTTPException(404, "Staged file not found")
+    source = (req.abstract or "").strip() or extract_first_pages_text(path, n=3)
+    try:
+        summary = summarize_text(load_config(), req.title or "", source)
+    except LLMError as e:
+        raise _http_from_llm_error(e) from e
+    if summary is None:
+        raise HTTPException(
+            400, "AI summary unavailable — enable Groq in Tools and check your key"
+        )
+    return {"summary": summary}
 
 
 @app.post("/api/discard/{temp_id}")
@@ -827,9 +1141,29 @@ def post_lookup_doi(payload: dict) -> dict:
         ).fetchone()
         duplicate = row is not None
 
+    cfg = load_config()
     suggested = suggest_topic(cr.get("title", ""), cr.get("abstract", ""))
+    ai_block: dict[str, Any] = {"enabled": llm_enabled(cfg)}
+    ai = suggest_topic_llm(
+        cfg, cr.get("title", ""), cr.get("abstract", ""), "", load_topics(),
+        fields=load_fields(),
+    )
+    if ai and ai.get("topic"):
+        proposed = ai["topic"]
+        if ai.get("is_new"):
+            proposed = sanitize_topic(proposed)
+        if proposed and proposed != "_uncategorized":
+            suggested = proposed
+        ai_block.update(
+            topic=proposed,
+            is_new=bool(ai.get("is_new")) and proposed != "_uncategorized",
+            reason=ai.get("reason", ""),
+            confidence=ai.get("confidence"),
+        )
+    elif ai and ai.get("error"):
+        ai_block["error"] = ai["error"]
     return {"ok": True, "metadata": cr, "duplicate": duplicate,
-            "suggested_topic": suggested}
+            "suggested_topic": suggested, "ai": ai_block}
 
 
 @app.post("/api/save")
@@ -851,7 +1185,9 @@ def post_save(req: SaveRequest) -> dict:
                         "reason": "Already in library", "existing": dict(row)}
 
     root = library_root()
-    topic = req.topic
+    topic = sanitize_topic(req.topic)
+    # Promote AI-proposed (or any unknown) topic to a first-class topic.
+    register_topic_if_new(topic)
     topic_dir = root / topic
     topic_dir.mkdir(exist_ok=True)
 
@@ -868,10 +1204,11 @@ def post_save(req: SaveRequest) -> dict:
     with db() as conn:
         cur = conn.execute(
             """INSERT INTO articles
-               (doi, author, title, journal, year, topic, filename, abstract, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (doi, author, title, journal, year, topic, filename,
+                abstract, summary, tags)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (req.doi, req.author, req.title, req.journal, req.year, topic,
-             final_path.name, req.abstract, req.tags),
+             final_path.name, req.abstract, req.summary, req.tags),
         )
         new_id = cur.lastrowid
 
@@ -976,7 +1313,7 @@ def get_topics() -> dict:
         ).fetchall()
         for r in rows:
             counts[r["topic"]] = r["c"]
-    return {"topics": topics, "counts": counts}
+    return {"topics": topics, "counts": counts, "fields": load_fields()}
 
 
 @app.post("/api/topics")
@@ -1086,7 +1423,10 @@ def patch_article(article_id: int, req: ArticleEditRequest) -> dict:
     )
     new_filename = make_filename(merged) if needs_rename else current["filename"]
 
+    merged["topic"] = sanitize_topic(merged["topic"])
     topic_changed = merged["topic"] != current["topic"]
+    if topic_changed:
+        register_topic_if_new(merged["topic"])
     new_topic_dir = root / merged["topic"]
     new_topic_dir.mkdir(exist_ok=True)
 
@@ -1102,11 +1442,11 @@ def patch_article(article_id: int, req: ArticleEditRequest) -> dict:
         conn.execute(
             """UPDATE articles SET
                  author = ?, title = ?, journal = ?, year = ?, doi = ?,
-                 topic = ?, filename = ?, abstract = ?, tags = ?
+                 topic = ?, filename = ?, abstract = ?, summary = ?, tags = ?
                WHERE id = ?""",
             (merged["author"], merged["title"], merged["journal"], merged["year"],
              merged["doi"], merged["topic"], final_filename,
-             merged["abstract"], merged["tags"], article_id),
+             merged["abstract"], merged.get("summary"), merged["tags"], article_id),
         )
 
     regenerate_library_md()
@@ -1197,6 +1537,327 @@ def post_reclassify(req: ReclassifyRequest) -> dict:
     return {"ok": True, "applied": applied, "changes": changes}
 
 
+# ----- Routes: bulk import -----
+#
+# Flow: pick a folder -> background job extracts DOI/metadata/topic for every
+# PDF (AI throttled, falling back to keyword on rate-limit) -> the UI shows a
+# review table -> the user confirms once and the batch is committed.
+
+_bulk_jobs: dict[str, dict] = {}
+_bulk_lock = threading.Lock()
+
+BULK_MAX_FILES = 3000
+_AI_THROTTLE_S = 0.15  # gentle pacing between AI calls during a bulk run
+
+
+class BulkStartRequest(BaseModel):
+    path: str
+    recursive: bool = True
+    use_ai: bool = True
+
+
+class BulkImportItem(BaseModel):
+    index: int
+    topic: str
+
+
+class BulkImportRequest(BaseModel):
+    job_id: str
+    items: list[BulkImportItem]
+
+
+def _bulk_process_file(pdf: Path, cfg: dict | None, topics_map: dict,
+                       fields: list[str], use_ai: bool, batch_dois: dict) -> dict:
+    """Extract metadata + suggest a topic for one PDF (no DB writes)."""
+    text = extract_first_pages_text(pdf)
+    text_doi = find_doi(text)
+    meta_doi = find_doi_in_metadata(pdf)
+    fn_doi = find_doi_in_filename(pdf.name)
+
+    doi: str | None = None
+    cr: dict | None = None
+    for cand in (text_doi, meta_doi, fn_doi):
+        if cand:
+            cr = crossref_lookup(cand)
+            if cr:
+                doi = cand
+                break
+    if not doi:
+        doi = text_doi or meta_doi or fn_doi
+
+    meta = cr or {"doi": doi, "author": "", "title": "", "journal": "",
+                  "year": None, "abstract": ""}
+    source = "crossref" if cr else "manual"
+    if not meta.get("title"):
+        meta["title"] = pdf.stem
+    if not meta.get("author"):
+        meta["author"] = "Unknown"
+    if not meta.get("abstract"):
+        meta["abstract"] = extract_abstract_heuristic(text)
+
+    # Duplicate check: existing DB + earlier in this same batch
+    duplicate = False
+    dup_reason = ""
+    item_doi = meta.get("doi")
+    if item_doi:
+        if item_doi in batch_dois:
+            duplicate, dup_reason = True, "duplicate within this batch"
+        else:
+            with db() as conn:
+                if conn.execute("SELECT 1 FROM articles WHERE doi = ?",
+                                (item_doi,)).fetchone():
+                    duplicate, dup_reason = True, "already in library"
+
+    kw_topic = suggest_topic(meta.get("title", ""),
+                             f"{meta.get('abstract', '')} {text[:2000]}")
+    suggested = kw_topic
+    ai_block: dict[str, Any] = {"used": False}
+    if use_ai:
+        ai = suggest_topic_llm(cfg, meta.get("title", ""), meta.get("abstract", ""),
+                               text[:3000], topics_map, fields=fields)
+        if ai and ai.get("topic"):
+            proposed = sanitize_topic(ai["topic"]) if ai.get("is_new") else ai["topic"]
+            if proposed and proposed != "_uncategorized":
+                suggested = proposed
+            ai_block = {"used": True, "topic": proposed,
+                        "is_new": bool(ai.get("is_new")) and proposed != "_uncategorized",
+                        "reason": ai.get("reason", "")}
+        elif ai and ai.get("error"):
+            ai_block = {"used": False, "error": ai["error"]}
+
+    return {
+        "source_path": str(pdf),
+        "filename": pdf.name,
+        "doi": meta.get("doi"),
+        "author": meta.get("author") or "Unknown",
+        "title": meta.get("title") or pdf.stem,
+        "journal": meta.get("journal") or "",
+        "year": meta.get("year"),
+        "abstract": meta.get("abstract") or "",
+        "source": source,
+        "suggested_topic": suggested,
+        "keyword_topic": kw_topic,
+        "ai": ai_block,
+        "duplicate": duplicate,
+        "dup_reason": dup_reason,
+        "include": not duplicate,  # default: skip duplicates
+    }
+
+
+def _bulk_worker(job_id: str, files: list[Path], use_ai: bool) -> None:
+    cfg = load_config()
+    topics_map = load_topics()
+    fields = load_fields()
+    ai_on = use_ai and llm_enabled(cfg)
+    batch_dois: dict[str, int] = {}
+
+    for i, pdf in enumerate(files):
+        with _bulk_lock:
+            if _bulk_jobs[job_id].get("cancelled"):
+                break
+            ai_now = ai_on and not _bulk_jobs[job_id].get("ai_cooldown")
+        try:
+            item = _bulk_process_file(pdf, cfg, topics_map, fields, ai_now, batch_dois)
+        except LLMError as e:
+            # Rate-limited mid-batch: stop calling AI for the rest, keep going.
+            if e.reason == "rate_limited":
+                with _bulk_lock:
+                    _bulk_jobs[job_id]["ai_cooldown"] = True
+                item = _bulk_process_file(pdf, cfg, topics_map, fields, False, batch_dois)
+                item["ai"] = {"used": False, "error": "rate_limited"}
+            else:
+                item = _bulk_process_file(pdf, cfg, topics_map, fields, False, batch_dois)
+        except Exception as e:  # never let one bad PDF kill the batch
+            logger.warning("Bulk: failed on %s: %s", pdf, e)
+            item = {"source_path": str(pdf), "filename": pdf.name, "error": str(e),
+                    "title": pdf.stem, "author": "Unknown", "journal": "", "year": None,
+                    "doi": None, "abstract": "", "source": "error",
+                    "suggested_topic": "_uncategorized", "ai": {"used": False},
+                    "duplicate": False, "dup_reason": "", "include": False}
+        if item.get("doi"):
+            batch_dois.setdefault(item["doi"], i)
+        with _bulk_lock:
+            item["index"] = i
+            _bulk_jobs[job_id]["items"].append(item)
+            _bulk_jobs[job_id]["processed"] = i + 1
+        if ai_now:
+            time.sleep(_AI_THROTTLE_S)
+
+    with _bulk_lock:
+        _bulk_jobs[job_id]["done"] = True
+
+
+@app.post("/api/bulk/start")
+def post_bulk_start(req: BulkStartRequest) -> dict:
+    folder = Path(req.path).expanduser().resolve()
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(400, "Folder not found")
+    globber = folder.rglob if req.recursive else folder.glob
+    files = sorted(p for p in globber("*.pdf") if p.is_file())
+    files = [p for p in files if p.suffix.lower() == ".pdf"][:BULK_MAX_FILES]
+    if not files:
+        raise HTTPException(400, "No PDF files found in that folder")
+
+    job_id = uuid.uuid4().hex[:12]
+    with _bulk_lock:
+        _bulk_jobs[job_id] = {
+            "id": job_id, "total": len(files), "processed": 0,
+            "done": False, "cancelled": False, "ai_cooldown": False, "items": [],
+        }
+    threading.Thread(target=_bulk_worker, args=(job_id, files, req.use_ai),
+                     daemon=True).start()
+    return {"job_id": job_id, "total": len(files)}
+
+
+@app.get("/api/bulk/status/{job_id}")
+def get_bulk_status(job_id: str) -> dict:
+    with _bulk_lock:
+        job = _bulk_jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        return {
+            "id": job["id"], "total": job["total"], "processed": job["processed"],
+            "done": job["done"], "ai_cooldown": job["ai_cooldown"],
+            "items": list(job["items"]),
+        }
+
+
+@app.post("/api/bulk/cancel/{job_id}")
+def post_bulk_cancel(job_id: str) -> dict:
+    with _bulk_lock:
+        if job_id in _bulk_jobs:
+            _bulk_jobs[job_id]["cancelled"] = True
+    return {"ok": True}
+
+
+@app.post("/api/bulk/import")
+def post_bulk_import(req: BulkImportRequest) -> dict:
+    with _bulk_lock:
+        job = _bulk_jobs.get(req.job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        items_by_index = {it["index"]: it for it in job["items"]}
+
+    root = library_root()
+    imported = 0
+    skipped_dup = 0
+    failed = 0
+    for sel in req.items:
+        it = items_by_index.get(sel.index)
+        if not it:
+            failed += 1
+            continue
+        doi = it.get("doi")
+        if doi:
+            with db() as conn:
+                if conn.execute("SELECT 1 FROM articles WHERE doi = ?",
+                                (doi,)).fetchone():
+                    skipped_dup += 1
+                    continue
+        src = Path(it["source_path"])
+        if not src.exists():
+            failed += 1
+            continue
+        topic = sanitize_topic(sel.topic or it.get("suggested_topic") or "_uncategorized")
+        register_topic_if_new(topic)
+        topic_dir = root / topic
+        topic_dir.mkdir(exist_ok=True)
+        filename = make_filename({
+            "author": it.get("author"), "title": it.get("title"),
+            "journal": it.get("journal"), "year": it.get("year"),
+        })
+        final_path = unique_path(topic_dir, filename)
+        try:
+            shutil.copy2(str(src), str(final_path))
+        except Exception as e:
+            logger.warning("Bulk import copy failed for %s: %s", src, e)
+            failed += 1
+            continue
+        with db() as conn:
+            conn.execute(
+                """INSERT INTO articles
+                   (doi, author, title, journal, year, topic, filename,
+                    abstract, summary, tags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doi, it.get("author"), it.get("title"), it.get("journal"),
+                 it.get("year"), topic, final_path.name, it.get("abstract"),
+                 None, None),
+            )
+        imported += 1
+
+    if imported:
+        regenerate_library_md()
+    with _bulk_lock:
+        _bulk_jobs.pop(req.job_id, None)  # job consumed
+    return {"ok": True, "imported": imported, "skipped_dup": skipped_dup,
+            "failed": failed}
+
+
+# ----- Routes: AI (Groq) -----
+
+@app.get("/api/llm/settings")
+def get_llm_settings() -> dict:
+    """Report AI status to the UI. The API key itself is never returned.
+    AI is on by default via a shared built-in key; a user key overrides it."""
+    llm = (load_config() or {}).get("llm") or {}
+    user_key = bool(llm.get("api_key"))
+    enabled = bool(llm.get("enabled", BUILTIN_ENABLED))
+    return {
+        "enabled": enabled and (user_key or bool(BUILTIN_KEY)),
+        "model": llm.get("model") or DEFAULT_MODEL,
+        "has_key": user_key,
+        "using_builtin": enabled and not user_key and bool(BUILTIN_KEY),
+        "builtin_available": bool(BUILTIN_KEY),
+    }
+
+
+@app.put("/api/llm/settings")
+def put_llm_settings(req: LLMSettings) -> dict:
+    cfg = load_config()
+    if cfg is None:
+        raise HTTPException(400, "Library not configured")
+    llm = cfg.get("llm") or {}
+    llm["enabled"] = req.enabled
+    llm["model"] = req.model or DEFAULT_MODEL
+    if req.api_key:  # only overwrite when a fresh key is supplied
+        llm["api_key"] = req.api_key.strip()
+    cfg["llm"] = llm
+    save_config(cfg)
+    return {"ok": True, "enabled": llm["enabled"], "model": llm["model"],
+            "has_key": bool(llm.get("api_key")),
+            "using_builtin": llm["enabled"] and not llm.get("api_key") and bool(BUILTIN_KEY)}
+
+
+@app.post("/api/article/{article_id}/summarize")
+def post_summarize_article(article_id: int) -> dict:
+    """Generate (and store) an AI summary for a saved article."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM articles WHERE id = ?", (article_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Not found")
+    a = dict(row)
+    source = (a.get("abstract") or "").strip()
+    if not source:
+        pdf = library_root() / a["topic"] / a["filename"]
+        if pdf.exists():
+            source = extract_first_pages_text(pdf, n=3)
+    try:
+        summary = summarize_text(load_config(), a.get("title", ""), source)
+    except LLMError as e:
+        raise _http_from_llm_error(e) from e
+    if summary is None:
+        raise HTTPException(
+            400, "AI summary unavailable — enable Groq in Tools and check your key"
+        )
+    with db() as conn:
+        conn.execute(
+            "UPDATE articles SET summary = ? WHERE id = ?", (summary, article_id)
+        )
+    return {"ok": True, "summary": summary}
+
+
 # ----- Routes: app self-update -----
 
 def _git(*args: str) -> tuple[int, str, str]:
@@ -1221,6 +1882,13 @@ def _bundled_app_path() -> Path | None:
     if exe.parent.name == "MacOS" and exe.parent.parent.name == "Contents":
         return exe.parent.parent.parent
     return None
+
+
+def _bundled_exe_path() -> Path | None:
+    """Return the running .exe path when frozen on Windows (onefile), else None."""
+    if not _is_frozen() or sys.platform != "win32":
+        return None
+    return Path(sys.executable)
 
 
 @app.get("/api/app/version")
@@ -1277,12 +1945,16 @@ def post_check_updates() -> dict:
                 "reason": f"Could not reach GitHub: {e}"}
 
     latest_tag = (data.get("tag_name") or "").lstrip("v")
+    available = bool(latest_tag) and _version_tuple(latest_tag) > _version_tuple(__version__)
+    notes = (data.get("body") or "").strip()
     return {
         "ok": True,
         "current": __version__,
         "latest": latest_tag or None,
-        "updates_available": bool(latest_tag) and latest_tag != __version__,
+        "updates_available": available,
         "release_url": data.get("html_url"),
+        "release_name": data.get("name"),
+        "notes": notes[:1500],
     }
 
 
@@ -1314,10 +1986,11 @@ def _update_packaged() -> dict:
 
     release = _fetch_latest_release()
     assets = release.get("assets") or []
+    # Prefer an explicit .app.zip; fall back to any .zip.
     zip_asset = next(
-        (a for a in assets if a.get("name", "").lower().endswith(".app.zip")
-         or a.get("name", "").lower().endswith(".zip")),
-        None,
+        (a for a in assets if a.get("name", "").lower().endswith(".app.zip")), None
+    ) or next(
+        (a for a in assets if a.get("name", "").lower().endswith(".zip")), None
     )
     if not zip_asset:
         raise HTTPException(400, "Latest release has no .app.zip asset")
@@ -1360,6 +2033,9 @@ def _update_packaged() -> dict:
     swap_script = staging / "swap.sh"
     timestamp = int(time.time())
     backup = Path.home() / ".Trash" / f"{current_app.name}.{timestamp}.bak"
+    cur_q = shlex.quote(str(current_app))
+    new_q = shlex.quote(str(new_app))
+    bak_q = shlex.quote(str(backup))
     swap_script.write_text(
         "#!/bin/bash\n"
         "set -e\n"
@@ -1367,9 +2043,14 @@ def _update_packaged() -> dict:
         "# Wait until the app process actually exits\n"
         "while kill -0 \"$APP_PID\" 2>/dev/null; do sleep 0.3; done\n"
         "sleep 0.5\n"  # filesystem settling buffer
-        f"mv {shlex.quote(str(current_app))} {shlex.quote(str(backup))} || true\n"
-        f"mv {shlex.quote(str(new_app))} {shlex.quote(str(current_app))}\n"
-        f"open {shlex.quote(str(current_app))}\n"
+        # Strip the quarantine flag so Gatekeeper doesn't block the freshly
+        # downloaded (unsigned) build on relaunch.
+        f"xattr -dr com.apple.quarantine {new_q} 2>/dev/null || true\n"
+        f"mv {cur_q} {bak_q} || true\n"
+        # If the swap fails, restore the previous app so we never end up with none.
+        f"mv {new_q} {cur_q} || {{ mv {bak_q} {cur_q} 2>/dev/null; exit 1; }}\n"
+        f"open {cur_q}\n",
+        encoding="utf-8",
     )
     swap_script.chmod(0o755)
 
@@ -1396,12 +2077,91 @@ def _update_packaged() -> dict:
     }
 
 
+def _update_packaged_windows() -> dict:
+    """Download the latest Windows .exe from the GitHub release and swap it in
+    via a detached batch script that waits for this process to exit, replaces
+    the exe, relaunches, and self-deletes."""
+    current_exe = _bundled_exe_path()
+    if not current_exe:
+        raise HTTPException(500, "Could not locate the running .exe")
+
+    release = _fetch_latest_release()
+    assets = release.get("assets") or []
+    exe_asset = next(
+        (a for a in assets if a.get("name", "").lower().endswith(".exe")), None
+    )
+    if not exe_asset:
+        raise HTTPException(400, "Latest release has no Windows .exe asset")
+    download_url = exe_asset.get("browser_download_url")
+    if not download_url:
+        raise HTTPException(400, "Asset has no download URL")
+
+    staging = Path(tempfile.gettempdir()) / "etal_update"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    new_exe = staging / "EtAl-new.exe"
+
+    logger.info("Downloading update from %s", download_url)
+    try:
+        with httpx.Client(timeout=300.0, follow_redirects=True) as client:
+            r = client.get(download_url)
+    except Exception as e:
+        raise HTTPException(400, f"Download failed: {e}") from e
+    if r.status_code != 200:
+        raise HTTPException(400, f"Download returned {r.status_code}")
+    new_exe.write_bytes(r.content)
+
+    bat = staging / "swap.bat"
+    pid = os.getpid()
+    cur, old = str(current_exe), str(current_exe) + ".old"
+    bat.write_text(
+        "@echo off\r\n"
+        ":waitloop\r\n"
+        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul\r\n'
+        "if not errorlevel 1 (\r\n"
+        "  ping -n 2 127.0.0.1 >nul\r\n"
+        "  goto waitloop\r\n"
+        ")\r\n"
+        f'move /Y "{cur}" "{old}" >nul 2>&1\r\n'
+        f'move /Y "{new_exe}" "{cur}" >nul\r\n'
+        f'if errorlevel 1 ( move /Y "{old}" "{cur}" >nul 2>&1 & goto end )\r\n'
+        f'start "" "{cur}"\r\n'
+        f'del /Q "{old}" >nul 2>&1\r\n'
+        ":end\r\n"
+        'del "%~f0"\r\n',
+        encoding="utf-8",
+    )
+
+    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so the swapper outlives us.
+    subprocess.Popen(["cmd", "/c", str(bat)],
+                     creationflags=0x00000008 | 0x00000200, close_fds=True)
+
+    def quit_soon() -> None:
+        time.sleep(1.2)
+        os._exit(0)
+
+    threading.Thread(target=quit_soon, daemon=True).start()
+
+    return {
+        "ok": True,
+        "from_version": __version__,
+        "to_version": (release.get("tag_name") or "").lstrip("v"),
+        "restart_required": True,
+        "message": "Update downloaded. The app will quit and relaunch in a moment.",
+    }
+
+
 @app.post("/api/app/update")
 def post_app_update() -> dict:
     """Apply the latest update. Source installs: git pull --ff-only.
-    Packaged builds: download the latest release's .app.zip and swap."""
+    Packaged builds: download the latest release asset and swap (mac .app / win .exe)."""
     if _is_frozen():
-        return _update_packaged()
+        if sys.platform == "darwin":
+            return _update_packaged()
+        if sys.platform == "win32":
+            return _update_packaged_windows()
+        raise HTTPException(400, "Self-update isn't supported on this platform yet")
     if not (APP_DIR / ".git").exists():
         raise HTTPException(400, "No update mechanism available "
                                  "(not a git checkout and not a packaged build)")
@@ -1415,7 +2175,7 @@ def post_app_update() -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    return HTMLResponse((FRONTEND_DIR / "index.html").read_text())
+    return HTMLResponse((FRONTEND_DIR / "index.html").read_text(encoding="utf-8"))
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

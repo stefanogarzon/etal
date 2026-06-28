@@ -1,0 +1,54 @@
+# Medical fields / specialties the user can declare for a library.
+# These are *context* for the AI classifier — they do NOT predefine topics.
+# The taxonomy grows organically from the papers the user actually loads.
+# Add or edit freely; `name` is what the AI sees, `group` is just for UI grouping.
+fields:
+  # Cardiovascular
+  - { slug: cardiology, name: Cardiology, group: Cardiovascular }
+  - { slug: interventional_cardiology, name: Interventional Cardiology, group: Cardiovascular }
+  - { slug: electrophysiology, name: Electrophysiology, group: Cardiovascular }
+  - { slug: heart_failure, name: Heart Failure, group: Cardiovascular }
+  - { slug: vascular_surgery, name: Vascular Surgery, group: Cardiovascular }
+
+  # Oncology
+  - { slug: oncology, name: Oncology (medical), group: Oncology }
+  - { slug: radiation_oncology, name: Radiation Oncology, group: Oncology }
+  - { slug: surgical_oncology, name: Surgical Oncology, group: Oncology }
+  - { slug: mastology, name: Mastology (Breast), group: Oncology }
+  - { slug: hematology, name: Hematology, group: Oncology }
+
+  # Imaging
+  - { slug: radiology, name: Radiology, group: Imaging }
+  - { slug: neuroradiology, name: Neuroradiology, group: Imaging }
+  - { slug: nuclear_medicine, name: Nuclear Medicine, group: Imaging }
+
+  # Neuroscience
+  - { slug: neurology, name: Neurology, group: Neuroscience }
+  - { slug: neurosurgery, name: Neurosurgery, group: Neuroscience }
+  - { slug: psychiatry, name: Psychiatry, group: Neuroscience }
+
+  # Internal medicine & subspecialties
+  - { slug: internal_medicine, name: Internal Medicine, group: Internal Medicine }
+  - { slug: gastroenterology, name: Gastroenterology / Hepatology, group: Internal Medicine }
+  - { slug: pulmonology, name: Pulmonology / Respiratory, group: Internal Medicine }
+  - { slug: nephrology, name: Nephrology, group: Internal Medicine }
+  - { slug: endocrinology, name: Endocrinology / Diabetes, group: Internal Medicine }
+  - { slug: rheumatology, name: Rheumatology, group: Internal Medicine }
+  - { slug: infectious_diseases, name: Infectious Diseases, group: Internal Medicine }
+  - { slug: geriatrics, name: Geriatrics, group: Internal Medicine }
+
+  # Surgery & perioperative
+  - { slug: general_surgery, name: General Surgery, group: Surgery }
+  - { slug: orthopedics, name: Orthopedics, group: Surgery }
+  - { slug: urology, name: Urology, group: Surgery }
+  - { slug: anesthesiology, name: Anesthesiology, group: Surgery }
+  - { slug: critical_care, name: Critical Care / Intensive Care, group: Surgery }
+
+  # Other
+  - { slug: obgyn, name: Obstetrics & Gynecology, group: Other }
+  - { slug: pediatrics, name: Pediatrics, group: Other }
+  - { slug: dermatology, name: Dermatology, group: Other }
+  - { slug: ophthalmology, name: Ophthalmology, group: Other }
+  - { slug: emergency_medicine, name: Emergency Medicine, group: Other }
+  - { slug: family_medicine, name: Family / Primary Care, group: Other }
+  - { slug: public_health, name: Public Health / Epidemiology, group: Other }
