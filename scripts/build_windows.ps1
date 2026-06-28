@@ -22,6 +22,7 @@ if (Test-Path "groq_key.txt") {
 }
 
 .\.venv-build\Scripts\pyinstaller.exe --noconfirm --clean --onefile --windowed --name EtAl `
+  --icon "icons\etal-main.ico" `
   @addData --collect-all webview app.py
 
 Write-Host "`nBuilt: dist\EtAl.exe"
