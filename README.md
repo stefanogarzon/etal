@@ -60,14 +60,20 @@ The cloud service handles the actual syncing; Et al. just points at the folder.
 
 > ⚠️ **Don't run the app on two machines at the same time** (or before the sync finishes). The SQLite database can be corrupted by concurrent/mid-sync writes. Open it on one machine at a time and let the sync settle before switching.
 
-## AI assist (Groq)
+## AI assist (Groq) — optional
 
-Topic classification and summaries use [Groq](https://groq.com)'s free tier. It is **on by default** (a shared key ships with the app), so it works out of the box.
+Topic classification and summaries can use [Groq](https://groq.com)'s free tier. It's **off until you add a key**; without one, the app classifies by keywords.
 
-- For heavy use, add your **own** free key (`console.groq.com/keys`) in **Tools → AI assist** — it overrides the shared one and avoids the shared rate limit. Your key is stored locally in `config.json` and never leaves your machine except to call Groq.
-- You can disable AI entirely in Tools; the app then falls back to offline keyword matching.
+**Get a free key and turn it on:**
+
+1. Open [console.groq.com/keys](https://console.groq.com/keys) and sign in (free, no credit card).
+2. Click **Create API Key**, name it, and create it.
+3. Copy the key (starts with `gsk_`) — you only see it once.
+4. In the app: **Tools → AI assist**, paste the key, tick **Enable AI assist**, **Save**.
+
+- Your key is stored locally in `config.json` and is only ever sent to Groq.
 - Models: classification uses `llama-3.3-70b-versatile`; summaries use the faster `llama-3.1-8b-instant`.
-- Any AI failure (offline, rate-limited, disabled) silently falls back to keyword matching — the app always works.
+- Any AI failure (offline, rate-limited, no key) silently falls back to keyword matching — the app always works.
 
 `_uncategorized` is reserved for papers outside your declared field(s); change your fields anytime in the Topics tab.
 

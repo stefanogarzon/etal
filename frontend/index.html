@@ -309,8 +309,16 @@ input:focus, select:focus, textarea:focus {
       </div>
       <div id="reclassify-result" style="margin-top:12px"></div>
 
-      <h3 style="margin-top:24px">AI assist (Groq)</h3>
-      <p style="color:var(--muted);font-size:13px">AI assist is <strong>on by default</strong> (shared key) — it suggests a topic (and may propose a new one) with llama-3.3-70b, and writes short summaries with the faster llama-3.1-8b (to save tokens), via Groq. It falls back to keyword matching if a call fails. To use your <em>own</em> Groq key (recommended for heavy use — the shared key has free-tier limits), paste it below; get one free at <span style="font-family:monospace">console.groq.com/keys</span>. A user key is stored locally in <code>config.json</code> and overrides the shared one.</p>
+      <h3 style="margin-top:24px">AI assist (Groq) — optional</h3>
+      <p style="color:var(--muted);font-size:13px">With a free Groq API key, Et al. suggests a topic for each paper (and can propose new ones) and writes short summaries. It's <strong>off until you add a key</strong>; without one, the app classifies by keywords. Topic suggestion uses <code>llama-3.3-70b</code>, summaries use the faster <code>llama-3.1-8b</code>; any failed call falls back to keyword matching.</p>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:4px"><strong>How to get a free key:</strong></p>
+      <ol style="color:var(--muted);font-size:13px;margin-top:0;padding-left:20px;line-height:1.6">
+        <li>Open <a href="#" id="groq-console-link" style="color:var(--accent)">console.groq.com/keys</a> and sign in (free, no credit card).</li>
+        <li>Click <strong>Create API Key</strong>, give it a name, and create it.</li>
+        <li>Copy the key (it starts with <code>gsk_</code>) — you only see it once.</li>
+        <li>Paste it below, tick <strong>Enable AI assist</strong>, and click Save.</li>
+      </ol>
+      <p style="color:var(--muted);font-size:12px">Your key is stored locally in <code>config.json</code> and is only ever sent to Groq.</p>
       <div style="display:flex; flex-direction:column; gap:8px; max-width:520px; margin-top:8px;">
         <label style="text-transform:none;letter-spacing:0;font-size:13px;display:flex;align-items:center;gap:6px;">
           <input type="checkbox" id="llm-enabled" style="width:auto"> Enable AI assist
@@ -637,7 +645,7 @@ function renderStaged(s) {
   } else if (ai.enabled && ai.topic) {
     aiHint = `<div style="font-size:11px;color:var(--accent);margin-top:4px">AI suggests <strong>${ai.topic}</strong>${ai.is_new ? ' <em>(new topic)</em>' : ''}${ai.reason ? ' — ' + ai.reason : ''}</div>`;
   } else if (!ai.enabled) {
-    aiHint = `<div style="font-size:11px;color:var(--muted);margin-top:4px">AI off — keyword match. Enable in Tools.</div>`;
+    aiHint = `<div style="font-size:11px;color:var(--muted);margin-top:4px">AI off — keyword match. Add a free Groq key in Tools to enable.</div>`;
   }
 
   const pdfUrl = `/static/pdfjs/web/viewer.html?file=${encodeURIComponent('/staged/' + s.temp_id)}#pagemode=none`;
@@ -1312,7 +1320,7 @@ async function resetToolsView() {
     $('#llm-model').value = s.model || '';
     $('#llm-key').value = '';
     $('#llm-key').placeholder = s.has_key
-      ? '•••••• (your key saved — leave blank to keep)' : 'gsk_… (optional, overrides shared key)';
+      ? '•••••• (your key saved — leave blank to keep)' : 'gsk_… (paste your Groq key)';
     $('#llm-status').textContent = !s.enabled ? 'Disabled'
       : s.has_key ? 'Enabled (your key)'
       : s.using_builtin ? 'Enabled (shared key)'
@@ -1320,9 +1328,18 @@ async function resetToolsView() {
   } catch {}
 }
 
+$('#groq-console-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  openExternalUrl('https://console.groq.com/keys');
+});
+// Pasting a key implies you want AI on.
+$('#llm-key').addEventListener('input', () => {
+  if ($('#llm-key').value.trim()) $('#llm-enabled').checked = true;
+});
+
 $('#llm-save-btn').addEventListener('click', async () => {
   const body = {
-    enabled: $('#llm-enabled').checked,
+    enabled: $('#llm-enabled').checked || !!$('#llm-key').value.trim(),
     model: $('#llm-model').value.trim() || 'llama-3.3-70b-versatile',
     api_key: $('#llm-key').value.trim() || null,
   };

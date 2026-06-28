@@ -9,18 +9,20 @@ asset and swaps it in. So a release must:
    - **Windows:** an asset whose name ends in **`.exe`** (e.g. `EtAl.exe`).
    - **macOS:** an asset whose name ends in **`.app.zip`** (e.g. `EtAl-macos.app.zip`).
 
-## Shared AI key (do this once before building)
+## AI key
 
-The bundled "on by default" Groq key is **not** in source (this repo is public). Put it
-in a git-ignored `groq_key.txt` at the project root before building so it gets baked into
-the app:
+Public builds ship **without** a key — AI is opt-in, and each user pastes their own free
+Groq key in Tools. **Do not bundle a key in a public release**: it's extractable from the
+binary and would be abused / auto-revoked.
+
+(Optional, *private* builds only.) To bake in a shared key for your own internal build,
+drop it in a git-ignored `groq_key.txt` at the project root before building:
 
 ```bash
-printf 'gsk_yourDedicatedKey' > groq_key.txt   # never commit this file
+printf 'gsk_yourDedicatedKey' > groq_key.txt   # never commit; never ship publicly
 ```
 
-`llm.py` reads the key from `ETAL_GROQ_KEY`, else this file, else falls back to opt-in
-(users paste their own key in Tools). Use a dedicated, rotatable key — never a personal one.
+`llm.py` resolves the key from `ETAL_GROQ_KEY` → `groq_key.txt` → empty (opt-in).
 
 ## Release checklist
 
