@@ -45,6 +45,19 @@ class JSAPI:
             return None
         return result[0]
 
+    def open_url(self, url: str) -> bool:
+        """Open a URL (e.g. a GitHub release page) in the system browser,
+        rather than navigating the app's own webview."""
+        if not url:
+            return False
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        elif sys.platform == "win32":
+            os.startfile(url)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", url])
+        return True
+
     def open_external(self, article_id: int) -> bool:
         """Open an article's PDF in the OS default viewer."""
         with db() as conn:

@@ -2,7 +2,7 @@
 
 *Your papers and everyone else's.*
 
-Local PDF library manager for clinical research. Drop a PDF, it pulls metadata from CrossRef, suggests a topic, renames the file as `Author-Title-Journal-Year.pdf`, files it under the matching topic folder, and indexes it in `library.md`.
+Local PDF library manager for clinical research. Drop a PDF, it pulls metadata from CrossRef, classifies it into a topic with AI (within your declared field), renames the file as `Author-Title-Journal-Year.pdf`, files it under the matching topic folder, and indexes it in `library.md`.
 
 ## Quick start
 
@@ -14,26 +14,62 @@ pip install -r requirements.txt
 python app.py
 ```
 
-A native window opens. On first run, click **Choose folder…** to pick where the library lives (e.g. `~/Documents/EtAl`). The app creates:
+A native window opens. On first run:
+
+1. **Choose folder…** — where the library lives. To use it on more than one computer, pick a **synced folder** (the setup screen suggests detected ones like Google Drive). If the folder already holds an Et al. library, you get an **Open this library** button instead (see *Sync* below).
+2. **Choose your field(s)** of practice (Cardiology, Oncology, Radiology, …, or a custom one). These scope how new papers are classified — they don't predefine any topics.
+
+The app creates:
 
 ```
 EtAl/
 ├── library.db           # SQLite — source of truth
 ├── library.md           # auto-regenerated index
-├── topics.yaml          # editable taxonomy
-├── _uncategorized/      # overflow
-├── IVUS/
-├── ACS/
-└── ...
+├── topics.yaml          # { fields: [...], topics: {...} }
+├── _uncategorized/      # overflow / out-of-field
+├── _inbox/
+└── ...                  # topic folders, created as your library grows
 ```
+
+There are **no preset topics**. Your taxonomy grows organically: as you add papers, the AI files each one into an existing topic or proposes a new one within your field(s).
 
 ## How it works
 
-- **Drop a PDF** → first-page text → DOI regex → CrossRef → metadata + topic suggestion → confirm → file is renamed, moved, indexed.
-- **No DOI found?** Manually paste a DOI/URL or fill the 4 fields by hand.
+- **Drop a PDF** → first-page text → DOI regex → CrossRef → metadata → **AI suggests a topic** within your field(s) (reusing an existing topic or proposing a new one) → you confirm → the file is renamed, moved, and indexed.
+- **AI summary** → one click writes a faithful 2–3 sentence summary you can store with the article.
+- **No DOI found?** Paste a DOI/URL or fill the 4 fields by hand.
 - **Duplicate DOI?** Skipped silently with a toast notification.
 - **Library tab** → SQLite FTS5 search across title/abstract/author/tags, filter by topic, click to read PDF inline.
-- **Topics tab** → add/edit/delete topics. Renaming a topic moves its folder and updates the DB. Deleting a topic with articles in it is blocked.
+- **Topics tab** → add/edit/delete topics, edit your **fields**, optionally install a ready-made topic **pack**. Renaming a topic moves its folder and updates the DB. Deleting a topic with articles in it is blocked.
+
+Everything is confirmation-before-save: nothing is filed until you click **Save**.
+
+## Bulk import
+
+Got hundreds of PDFs? **Inbox → "Bulk import a folder…"**, pick a folder, and the app processes every PDF in the background (DOI → CrossRef → AI topic). You then get a **review table** — adjust topics, uncheck any you don't want (duplicates are pre-unchecked) — and click **Import selected** to commit the whole batch at once. Originals are copied, not moved. If the AI hits its rate limit mid-run, the rest fall back to keyword matching (flagged in the table) and you can reclassify later from Tools.
+
+## Sync across computers
+
+The library folder is fully portable. To use one library on several machines (e.g. a Windows PC and a MacBook):
+
+1. Put the library in a **cloud-synced folder** (Google Drive, Dropbox, OneDrive, iCloud).
+2. On the first machine, create it there as usual.
+3. On the second machine, install Et al. and on the folder step pick the **same synced folder** → **Open this library** (or, later, **Tools → Open / switch library**).
+
+The cloud service handles the actual syncing; Et al. just points at the folder.
+
+> ⚠️ **Don't run the app on two machines at the same time** (or before the sync finishes). The SQLite database can be corrupted by concurrent/mid-sync writes. Open it on one machine at a time and let the sync settle before switching.
+
+## AI assist (Groq)
+
+Topic classification and summaries use [Groq](https://groq.com)'s free tier. It is **on by default** (a shared key ships with the app), so it works out of the box.
+
+- For heavy use, add your **own** free key (`console.groq.com/keys`) in **Tools → AI assist** — it overrides the shared one and avoids the shared rate limit. Your key is stored locally in `config.json` and never leaves your machine except to call Groq.
+- You can disable AI entirely in Tools; the app then falls back to offline keyword matching.
+- Models: classification uses `llama-3.3-70b-versatile`; summaries use the faster `llama-3.1-8b-instant`.
+- Any AI failure (offline, rate-limited, disabled) silently falls back to keyword matching — the app always works.
+
+`_uncategorized` is reserved for papers outside your declared field(s); change your fields anytime in the Topics tab.
 
 ## Search syntax
 
@@ -43,24 +79,39 @@ Searches use SQLite FTS5 prefix matching. Examples:
 - `IVUS PCI` — matches articles containing both terms
 - `"left main"` — exact phrase
 
+## Packs (optional)
+
+Packs are pre-built topic taxonomies (`packs/*.yaml`) you can install from the Topics tab to seed topics instead of growing them from scratch. They coexist with fields and with custom topics; cross-pack name conflicts are suffixed with the pack slug.
+
 ## Packaging as a standalone app
 
-To bundle into a single `.app` (macOS) / `.exe` (Windows):
+Use the helper scripts (each OS builds its own artifact — PyInstaller doesn't cross-compile):
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --add-data "frontend:frontend" --add-data "topics.yaml:." app.py
+# Windows  ->  dist\EtAl.exe
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+
+# macOS    ->  dist/EtAl-macos.app.zip
+bash scripts/build_macos.sh
 ```
 
-The output lands in `dist/`. On macOS, codesign and notarize for distribution; for personal use, the unsigned `.app` runs fine.
+The Windows `.exe` needs the **Microsoft Edge WebView2 runtime** (preinstalled on Windows 11). On macOS, codesign and notarize for distribution; for personal use, the unsigned `.app` runs fine. See **[BUILD.md](BUILD.md)** for the full build-and-release checklist.
+
+## Updating
+
+**Tools → App update → Check for updates** compares the running version with the latest [GitHub Release](https://github.com/stefanogarzon/etal/releases) and shows its release notes. **Apply update** then:
+- **Packaged macOS app:** downloads the new `.app`, clears the Gatekeeper quarantine flag, swaps the bundle, and relaunches automatically.
+- **Source checkout:** runs `git pull --ff-only`.
+
+Publishing a new version = bump `__version__` in `server.py`, build, and attach the `.app.zip` to a GitHub Release whose tag is the new version (e.g. `v0.2.0`).
 
 ## Config location
 
-The library path is stored in `~/.config/etal/config.json`. To switch libraries, delete that file and restart.
+The library path and your Groq settings live in `~/.config/etal/config.json`. The library's fields and topics live in the library's own `topics.yaml`. To switch libraries, delete the config file and restart.
 
 ## Limitations & next steps
 
-- DOI extraction depends on the publisher embedding a recognizable DOI on page 1–2. ~95% hit rate in mainstream cardio journals; older scans need manual lookup.
+- DOI extraction depends on the publisher embedding a recognizable DOI on page 1–2. ~95% hit rate in mainstream journals; older scans need manual lookup.
 - CrossRef abstracts come as JATS XML — stripped to plain text but formatting is lost.
-- No tag autocompletion yet — tags are free-text.
-- No bulk import — drop one PDF at a time (intentional, to keep the confirm-before-save flow).
+- The shared Groq key has free-tier rate limits shared across all users; add your own key for heavy/bulk use.
+- Sync relies on an external cloud service; the app itself does not sync, and SQLite shouldn't be opened on two machines at once.

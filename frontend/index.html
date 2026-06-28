@@ -224,15 +224,20 @@ input:focus, select:focus, textarea:focus {
       <p style="color:var(--muted); font-style: italic; margin-top: -8px;">Your papers and everyone else's.</p>
 
       <div id="setup-step-1">
-        <p>Choose a folder where your library will live.</p>
+        <p>Choose a folder where your library will live. To use it on more than one
+          computer, put it in a synced folder (e.g. Google Drive).</p>
         <button id="pick-folder-btn">Choose folder...</button>
-        <div class="path-display" id="path-display" style="display:none"></div>
-        <button id="goto-packs-btn" style="display:none">Next: choose packs</button>
+        <div id="cloud-suggestions" style="max-width:560px; margin:12px auto 0; text-align:left;"></div>
+        <div class="path-display" id="path-display" style="display:none; margin-top:10px"></div>
+        <div id="folder-note" style="display:none; max-width:520px; margin:8px auto 0; font-size:13px; color:var(--accent)"></div>
+        <button id="goto-packs-btn" style="display:none; margin-top:10px">Next: choose your field(s)</button>
       </div>
 
       <div id="setup-step-2" style="display:none">
-        <p>Pick one or more starter packs. You can install more later from the Topics tab.</p>
-        <div id="pack-list" style="text-align:left; max-width:500px; margin: 16px auto;"></div>
+        <p>Choose your field(s) of practice. The app uses these to auto-classify the
+          papers you add — your topics grow organically as the library fills up.
+          You can change this anytime in the Topics tab.</p>
+        <div id="field-list" style="text-align:left; max-width:580px; margin: 16px auto;"></div>
         <button id="confirm-setup-btn">Initialize library</button>
       </div>
 
@@ -248,6 +253,11 @@ input:focus, select:focus, textarea:focus {
         <p>or click to choose a file</p>
         <input type="file" id="file-input" accept=".pdf" style="display:none">
       </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="ghost" id="bulk-import-btn">Bulk import a folder…</button>
+        <span style="color:var(--muted); font-size:12px;">Process many PDFs at once, review, then import in one go.</span>
+      </div>
+      <div id="bulk-panel"></div>
       <div id="staged-list"></div>
     </div>
   </div>
@@ -275,7 +285,14 @@ input:focus, select:focus, textarea:focus {
       <h2>Tools</h2>
       <p style="color:var(--muted)">Bulk maintenance operations and app updates.</p>
 
-      <h3 style="margin-top:20px">Refresh metadata</h3>
+      <h3 style="margin-top:20px">Library &amp; sync</h3>
+      <p style="color:var(--muted);font-size:13px">Library folder: <code id="tools-lib-path">…</code>.
+        To use it on another computer, keep this folder in a synced service (e.g. Google Drive)
+        and click “Open / switch library” there. <strong>Don't run the app on two machines at
+        once</strong> — let the sync finish first, to avoid database conflicts.</p>
+      <button class="ghost" id="switch-library-btn">Open / switch library…</button>
+
+      <h3 style="margin-top:24px">Refresh metadata</h3>
       <p style="color:var(--muted);font-size:13px">Re-query CrossRef for every article that has a DOI. Useful after corrections in CrossRef or to fill missing fields.</p>
       <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
         <label style="text-transform:none;letter-spacing:0;font-size:13px;display:flex;align-items:center;gap:6px;">
@@ -292,9 +309,27 @@ input:focus, select:focus, textarea:focus {
       </div>
       <div id="reclassify-result" style="margin-top:12px"></div>
 
+      <h3 style="margin-top:24px">AI assist (Groq)</h3>
+      <p style="color:var(--muted);font-size:13px">AI assist is <strong>on by default</strong> (shared key) — it suggests a topic (and may propose a new one) with llama-3.3-70b, and writes short summaries with the faster llama-3.1-8b (to save tokens), via Groq. It falls back to keyword matching if a call fails. To use your <em>own</em> Groq key (recommended for heavy use — the shared key has free-tier limits), paste it below; get one free at <span style="font-family:monospace">console.groq.com/keys</span>. A user key is stored locally in <code>config.json</code> and overrides the shared one.</p>
+      <div style="display:flex; flex-direction:column; gap:8px; max-width:520px; margin-top:8px;">
+        <label style="text-transform:none;letter-spacing:0;font-size:13px;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="llm-enabled" style="width:auto"> Enable AI assist
+        </label>
+        <div>
+          <label style="font-size:11px;color:var(--muted)">GROQ API KEY</label>
+          <input type="password" id="llm-key" placeholder="gsk_…  (leave blank to keep current)">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted)">MODEL</label>
+          <input type="text" id="llm-model" placeholder="llama-3.3-70b-versatile">
+        </div>
+        <div><button class="ghost" id="llm-save-btn">Save AI settings</button>
+          <span id="llm-status" style="margin-left:10px;color:var(--muted);font-size:12px"></span></div>
+      </div>
+
       <h3 style="margin-top:24px">App update</h3>
       <p style="color:var(--muted);font-size:13px">Current version: <strong id="current-version">…</strong></p>
-      <p style="color:var(--muted);font-size:13px">Compares against the latest GitHub Release. For now, applying an update runs <code>git pull --ff-only</code> against your source checkout.</p>
+      <p style="color:var(--muted);font-size:13px">Compares against the latest GitHub Release. The packaged app downloads the new build, swaps it in, and relaunches automatically; a source checkout runs <code>git pull --ff-only</code>.</p>
       <div style="display:flex; gap:8px; margin-top:8px;">
         <button class="ghost" id="check-updates-btn">Check for updates</button>
         <button class="ghost" id="apply-update-btn" style="display:none">Apply update</button>
@@ -315,7 +350,8 @@ input:focus, select:focus, textarea:focus {
         </div>
       </div>
       <p style="color:var(--muted)">Topics map to folders inside your library.
-        Keywords are used to suggest a topic when you drop a new PDF.</p>
+        They grow automatically as you add papers; keywords help the offline matcher.</p>
+      <div id="fields-bar" style="margin:6px 0 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;"></div>
       <div id="topics-list"></div>
     </div>
   </div>
@@ -378,6 +414,15 @@ function showModal(html) {
   $('#modal-bg').classList.add('show');
 }
 function closeModal() { $('#modal-bg').classList.remove('show'); }
+
+function openExternalUrl(url) {
+  if (!url) return;
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.open_url) {
+    window.pywebview.api.open_url(url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
 $('#modal-bg').addEventListener('click', e => {
   if (e.target.id === 'modal-bg') closeModal();
 });
@@ -406,11 +451,103 @@ async function init() {
     $('#tabs').style.display = 'flex';
     $('#lib-path').textContent = cfg.config.library_path;
     loadTopicsForFilter();
+  } else {
+    loadCloudSuggestions();
   }
 }
 
+let existingLibrary = false;
+
+async function loadCloudSuggestions() {
+  try {
+    const r = await api('/api/cloud_locations');
+    const box = $('#cloud-suggestions');
+    if (!r.locations || !r.locations.length) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="pack-chips-label">Synced folders (recommended for multi-device)</div>' +
+      r.locations.map(l =>
+        `<button class="ghost cloud-pick" type="button" style="margin:6px 6px 0 0">${l.service}: ${l.suggested}</button>`
+      ).join('');
+    box.querySelectorAll('.cloud-pick').forEach((b, i) => {
+      b.onclick = () => choosePicked(r.locations[i].suggested);
+    });
+  } catch {}
+}
+
+async function choosePicked(folder) {
+  if (!folder) return;
+  pickedPath = folder;
+  $('#path-display').textContent = folder;
+  $('#path-display').style.display = 'block';
+  try {
+    const r = await api('/api/inspect_folder', { method: 'POST', body: { path: folder } });
+    existingLibrary = r.is_library;
+    const note = $('#folder-note');
+    if (r.is_library) {
+      note.innerHTML = `Found an existing Et al. library here (<strong>${r.article_count}</strong> articles` +
+        `${r.fields && r.fields.length ? ' · ' + r.fields.join(', ') : ''}). Open it to sync this computer.`;
+      note.style.display = 'block';
+      $('#goto-packs-btn').textContent = 'Open this library';
+    } else {
+      note.style.display = 'none';
+      $('#goto-packs-btn').textContent = 'Next: choose your field(s)';
+    }
+    $('#goto-packs-btn').style.display = 'inline-block';
+  } catch (e) { toast(e.message, true); }
+}
+
 let pickedPath = null;
-let pickedPacks = new Set();
+let pickedFields = new Set();
+
+// Render a grouped checkbox list of specialty fields into `container`.
+// `selected` is a Set of field NAMES; toggling mutates it in place.
+// Selected names not in the catalog show under "Custom"; an "Other…" row
+// lets the user add any field the catalog doesn't cover.
+function renderFieldChecklist(container, available, selected) {
+  const catalogNames = new Set(available.map(f => f.name));
+  function mkItem(name) {
+    const label = document.createElement('label');
+    label.className = 'pack-option' + (selected.has(name) ? ' checked' : '');
+    label.style.cssText = 'padding:8px 12px; margin-bottom:6px;';
+    label.innerHTML = `<input type="checkbox" ${selected.has(name) ? 'checked' : ''}>
+      <span class="pack-name">${name}</span>`;
+    const cb = label.querySelector('input');
+    cb.onchange = () => {
+      if (cb.checked) { selected.add(name); label.classList.add('checked'); }
+      else { selected.delete(name); label.classList.remove('checked'); }
+    };
+    return label;
+  }
+  function render() {
+    container.innerHTML = '';
+    const groups = {};
+    available.forEach(f => { (groups[f.group || 'Other'] ||= []).push(f.name); });
+    const custom = [...selected].filter(n => !catalogNames.has(n));
+    if (custom.length) groups['Custom'] = custom;
+    Object.entries(groups).forEach(([group, names]) => {
+      const h = document.createElement('div');
+      h.className = 'pack-chips-label';
+      h.style.cssText = 'margin:10px 0 4px';
+      h.textContent = group;
+      container.appendChild(h);
+      names.forEach(n => container.appendChild(mkItem(n)));
+    });
+    // "Other…" — add a custom field not in the catalog
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; gap:6px; margin-top:10px;';
+    row.innerHTML = `<input type="text" placeholder="Other field… (e.g. Sports Medicine)" style="flex:1">
+      <button class="ghost" type="button">Add</button>`;
+    const inp = row.querySelector('input');
+    const add = () => {
+      const v = inp.value.trim();
+      if (v && !selected.has(v)) { selected.add(v); render(); }
+      inp.value = ''; inp.focus();
+    };
+    row.querySelector('button').onclick = add;
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    container.appendChild(row);
+  }
+  render();
+}
 
 $('#pick-folder-btn').addEventListener('click', async () => {
   let folder = null;
@@ -419,43 +556,30 @@ $('#pick-folder-btn').addEventListener('click', async () => {
   } else {
     folder = prompt('Library folder path:');
   }
-  if (folder) {
-    pickedPath = folder;
-    $('#path-display').textContent = folder;
-    $('#path-display').style.display = 'block';
-    $('#goto-packs-btn').style.display = 'inline-block';
-  }
+  if (folder) choosePicked(folder);
 });
 
 $('#goto-packs-btn').addEventListener('click', async () => {
+  if (existingLibrary) {
+    try {
+      await api('/api/open_library', { method: 'POST', body: { path: pickedPath } });
+      toast('Library opened'); location.reload();
+    } catch (e) { toast(e.message, true); }
+    return;
+  }
   $('#setup-step-1').style.display = 'none';
   $('#setup-step-2').style.display = 'block';
-  const r = await api('/api/packs');
-  const list = $('#pack-list');
-  list.innerHTML = '';
-  r.packs.forEach(p => {
-    const label = document.createElement('label');
-    label.className = 'pack-option';
-    label.innerHTML = `
-      <input type="checkbox" value="${p.slug}">
-      <span class="pack-name">${p.name}</span>
-      <span style="color:var(--muted); font-size:12px;"> · ${p.topic_count} topics</span>
-      <div class="pack-desc">${p.description || ''}</div>
-    `;
-    const cb = label.querySelector('input');
-    cb.onchange = () => {
-      if (cb.checked) { pickedPacks.add(p.slug); label.classList.add('checked'); }
-      else { pickedPacks.delete(p.slug); label.classList.remove('checked'); }
-    };
-    list.appendChild(label);
-  });
+  const r = await api('/api/fields');
+  renderFieldChecklist($('#field-list'), r.available || [], pickedFields);
 });
 
 $('#confirm-setup-btn').addEventListener('click', async () => {
+  if (pickedFields.size === 0 &&
+      !confirm('No field selected. The AI will infer the field from each paper. Continue?')) return;
   try {
     await api('/api/setup', {
       method: 'POST',
-      body: { library_path: pickedPath, pack_slugs: Array.from(pickedPacks) }
+      body: { library_path: pickedPath, fields: Array.from(pickedFields) }
     });
     toast('Library initialized');
     location.reload();
@@ -501,6 +625,21 @@ function renderStaged(s) {
   const dupLabel = s.duplicate
     ? '<span class="badge warn" style="margin-left:6px">Already in library</span>' : '';
 
+  // AI topic suggestion (advisory). May include a brand-new proposed topic.
+  const ai = s.ai || {};
+  const topicOpts = [...s.topics];
+  if (ai.is_new && ai.topic && !topicOpts.includes(ai.topic)) topicOpts.unshift(ai.topic);
+  let aiHint = '';
+  if (ai.error === 'rate_limited') {
+    aiHint = `<div style="font-size:11px;color:#8b6500;margin-top:4px">⚠ AI rate-limited — using keyword match. Try again shortly, or add your own key in Tools.</div>`;
+  } else if (ai.error) {
+    aiHint = `<div style="font-size:11px;color:#8b6500;margin-top:4px">⚠ AI unavailable — using keyword match.</div>`;
+  } else if (ai.enabled && ai.topic) {
+    aiHint = `<div style="font-size:11px;color:var(--accent);margin-top:4px">AI suggests <strong>${ai.topic}</strong>${ai.is_new ? ' <em>(new topic)</em>' : ''}${ai.reason ? ' — ' + ai.reason : ''}</div>`;
+  } else if (!ai.enabled) {
+    aiHint = `<div style="font-size:11px;color:var(--muted);margin-top:4px">AI off — keyword match. Enable in Tools.</div>`;
+  }
+
   const pdfUrl = `/static/pdfjs/web/viewer.html?file=${encodeURIComponent('/staged/' + s.temp_id)}#pagemode=none`;
   card.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -521,9 +660,9 @@ function renderStaged(s) {
         <div><label>Journal</label><input data-f="journal" value="${m.journal || ''}"></div>
         <div><label>DOI</label><input data-f="doi" value="${m.doi || ''}"></div>
         <div><label>Topic</label><select data-f="topic">
-          ${s.topics.map(t =>
+          ${topicOpts.map(t =>
             `<option value="${t}" ${t === s.suggested_topic ? 'selected' : ''}>${t}</option>`).join('')}
-        </select></div>
+        </select>${aiHint}</div>
         <div><label>Tags (comma-sep)</label><input data-f="tags" value=""></div>
         <div class="full">
           <label style="display:flex;justify-content:space-between;align-items:center;">
@@ -531,6 +670,13 @@ function renderStaged(s) {
             <a href="#" data-act="extract-abstract" style="font-size:11px;color:var(--accent);text-transform:none;letter-spacing:0;">Auto-fill from PDF</a>
           </label>
           <textarea data-f="abstract" rows="3">${m.abstract || ''}</textarea>
+        </div>
+        <div class="full">
+          <label style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Summary (AI)</span>
+            <a href="#" data-act="summarize" style="font-size:11px;color:var(--accent);text-transform:none;letter-spacing:0;">Generate with AI</a>
+          </label>
+          <textarea data-f="summary" rows="2" placeholder="Optional — short plain-language summary"></textarea>
         </div>
       </div>
     </div>
@@ -558,6 +704,21 @@ function renderStaged(s) {
       if (r.abstract) { ta.value = r.abstract; toast('Abstract extracted'); }
       else { toast('No abstract found in PDF', true); }
     } catch (e) { toast(e.message, true); }
+  };
+  const sm = card.querySelector('[data-act="summarize"]');
+  if (sm) sm.onclick = async (e) => {
+    e.preventDefault();
+    const title = card.querySelector('[data-f="title"]').value;
+    const abstract = card.querySelector('[data-f="abstract"]').value;
+    sm.textContent = 'Generating…';
+    try {
+      const r = await api(`/api/summarize/${encodeURIComponent(s.temp_id)}`, {
+        method: 'POST', body: { title, abstract },
+      });
+      card.querySelector('[data-f="summary"]').value = r.summary || '';
+      toast('Summary generated');
+    } catch (err) { toast(err.message, true); }
+    sm.textContent = 'Generate with AI';
   };
 }
 
@@ -611,11 +772,139 @@ function manualLookup(card) {
         if (el && m[f] != null) el.value = m[f];
       });
       const sel = card.querySelector('[data-f="topic"]');
-      if (sel && r.suggested_topic) sel.value = r.suggested_topic;
-      toast('Metadata loaded');
+      if (sel && r.suggested_topic) {
+        if (!Array.from(sel.options).some(o => o.value === r.suggested_topic)) {
+          const opt = document.createElement('option');
+          opt.value = opt.textContent = r.suggested_topic;
+          sel.insertBefore(opt, sel.firstChild);
+        }
+        sel.value = r.suggested_topic;
+      }
+      toast(r.ai && r.ai.is_new ? `Metadata loaded · AI proposes new topic "${r.ai.topic}"` : 'Metadata loaded');
       closeModal();
     } catch (e) { toast(e.message, true); }
   };
+}
+
+// ---------- bulk import ----------
+let bulkJobId = null;
+let bulkTimer = null;
+let bulkTopics = [];
+
+$('#bulk-import-btn').addEventListener('click', async () => {
+  let folder = null;
+  if (window.pywebview && window.pywebview.api) {
+    folder = await window.pywebview.api.pick_folder();
+  } else {
+    folder = prompt('Folder containing PDFs:');
+  }
+  if (!folder) return;
+  try {
+    const r = await api('/api/bulk/start', { method: 'POST', body: { path: folder } });
+    bulkJobId = r.job_id;
+    try { const t = await api('/api/topics'); bulkTopics = Object.keys(t.topics).sort(); }
+    catch { bulkTopics = []; }
+    if (bulkTimer) clearInterval(bulkTimer);
+    pollBulk();
+    bulkTimer = setInterval(pollBulk, 800);
+  } catch (e) { toast(e.message, true); }
+});
+
+async function pollBulk() {
+  if (!bulkJobId) return;
+  let s;
+  try { s = await api(`/api/bulk/status/${bulkJobId}`); }
+  catch { clearInterval(bulkTimer); bulkTimer = null; return; }
+  renderBulk(s);
+  if (s.done) { clearInterval(bulkTimer); bulkTimer = null; }
+}
+
+function bulkTopicOptions(selected) {
+  const opts = [...new Set([...bulkTopics, selected, '_uncategorized'])].filter(Boolean);
+  return opts.map(t => `<option value="${t}" ${t === selected ? 'selected' : ''}>${t}</option>`).join('');
+}
+
+function bulkBadge(i) {
+  if (i.error) return '<span class="badge warn">error</span>';
+  if (i.duplicate) return `<span class="badge warn">dup — ${i.dup_reason || 'duplicate'}</span>`;
+  if (i.ai && i.ai.used) return `<span class="badge">AI${i.ai.is_new ? ' · new' : ''}</span>`;
+  if (i.ai && i.ai.error === 'rate_limited') return '<span class="badge warn">keyword (AI limit)</span>';
+  if (i.source === 'crossref') return '<span class="badge">CrossRef</span>';
+  return '<span class="badge warn">no DOI</span>';
+}
+
+function renderBulk(s) {
+  const panel = $('#bulk-panel');
+  if (!s.done) {
+    const pct = s.total ? Math.round(100 * s.processed / s.total) : 0;
+    const cooldown = s.ai_cooldown
+      ? ' · <span style="color:#8b6500">AI rate-limited — using keyword for the rest</span>' : '';
+    panel.innerHTML = `<div style="margin:14px 0">
+      <div>Processing ${s.processed}/${s.total}…${cooldown}</div>
+      <div style="width:100%;height:5px;background:var(--border);border-radius:3px;margin-top:6px;overflow:hidden">
+        <div style="height:100%;background:var(--accent);width:${pct}%"></div></div>
+      <button class="ghost" id="bulk-cancel" style="margin-top:8px">Cancel</button>
+    </div>`;
+    const c = $('#bulk-cancel');
+    if (c) c.onclick = async () => {
+      try { await api(`/api/bulk/cancel/${bulkJobId}`, { method: 'POST', body: {} }); } catch {}
+    };
+    return;
+  }
+  const items = s.items;
+  const ready = items.filter(i => i.include).length;
+  const rows = items.map(i => `
+    <tr data-index="${i.index}" style="border-top:1px solid var(--border)">
+      <td style="padding:6px"><input type="checkbox" class="bulk-cb" ${i.include ? 'checked' : ''} style="width:auto"></td>
+      <td style="padding:6px;max-width:300px">${(i.title || '').replace(/</g, '&lt;')}
+        <div style="color:var(--muted);font-size:11px">${i.filename}</div></td>
+      <td style="padding:6px">${i.author || ''}</td>
+      <td style="padding:6px">${i.year || ''}</td>
+      <td style="padding:6px"><select class="bulk-topic">${bulkTopicOptions(i.suggested_topic)}</select></td>
+      <td style="padding:6px;font-size:11px">${bulkBadge(i)}</td>
+    </tr>`).join('');
+  panel.innerHTML = `<div style="margin:14px 0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>${items.length} processed · ${ready} ready to import</strong>
+      <div style="display:flex;gap:6px">
+        <button class="ghost" id="bulk-selall">Select all</button>
+        <button class="ghost" id="bulk-none">Clear</button>
+        <button class="ghost" id="bulk-discard">Discard</button>
+        <button id="bulk-import-go">Import selected</button>
+      </div>
+    </div>
+    <div style="max-height:52vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="position:sticky;top:0;background:var(--panel);text-align:left">
+          <th style="padding:6px"></th><th style="padding:6px">Title</th><th style="padding:6px">Author</th>
+          <th style="padding:6px">Year</th><th style="padding:6px">Topic</th><th style="padding:6px">Status</th>
+        </tr></thead><tbody>${rows}</tbody></table>
+    </div>
+  </div>`;
+  $('#bulk-selall').onclick = () => panel.querySelectorAll('.bulk-cb').forEach(c => c.checked = true);
+  $('#bulk-none').onclick = () => panel.querySelectorAll('.bulk-cb').forEach(c => c.checked = false);
+  $('#bulk-discard').onclick = () => { panel.innerHTML = ''; bulkJobId = null; };
+  $('#bulk-import-go').onclick = doBulkImport;
+}
+
+async function doBulkImport() {
+  const panel = $('#bulk-panel');
+  const sel = [];
+  panel.querySelectorAll('tr[data-index]').forEach(tr => {
+    const cb = tr.querySelector('.bulk-cb');
+    if (cb && cb.checked) {
+      sel.push({ index: Number(tr.dataset.index), topic: tr.querySelector('.bulk-topic').value });
+    }
+  });
+  if (!sel.length) { toast('Nothing selected', true); return; }
+  const btn = $('#bulk-import-go');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    const r = await api('/api/bulk/import', { method: 'POST', body: { job_id: bulkJobId, items: sel } });
+    toast(`Imported ${r.imported} · ${r.skipped_dup} dup · ${r.failed} failed`);
+    panel.innerHTML = ''; bulkJobId = null;
+    loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Import selected'; }
 }
 
 // ---------- library ----------
@@ -721,8 +1010,10 @@ async function openArticle(id, el) {
         <h2>${a.title}</h2>
         <div class="meta">${a.author} · ${a.journal || ''} · ${a.year || ''} ·
           ${displayTopic(a.topic)} ${a.doi ? '· ' + a.doi : ''}</div>
+        ${a.summary ? `<div class="meta" style="margin-top:6px;color:var(--text);font-style:italic;max-width:72ch;line-height:1.4">${a.summary}</div>` : ''}
       </div>
       <div style="display:flex; gap:6px;">
+        <button class="ghost" id="summarize-btn">${a.summary ? 'Re-summarize' : 'Summarize'}</button>
         <button class="ghost" id="edit-article-btn">Edit</button>
         <button class="ghost" id="share-btn">Share...</button>
         <button class="ghost" id="open-external-btn">Open in Preview</button>
@@ -747,6 +1038,16 @@ async function openArticle(id, el) {
     const ok = await window.pywebview.api.share_pdf(id);
     if (!ok) toast('Could not share PDF', true);
   };
+  $('#summarize-btn').onclick = async () => {
+    const btn = $('#summarize-btn');
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Summarizing…';
+    try {
+      await api(`/api/article/${id}/summarize`, { method: 'POST', body: {} });
+      toast('Summary saved');
+      openArticle(id, el);  // refresh viewer with the new summary
+    } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = old; }
+  };
   $('#edit-article-btn').onclick = () => editArticle(a);
   $('#delete-article-btn').onclick = async () => {
     if (!confirm(`Delete "${a.title}"?`)) return;
@@ -758,9 +1059,42 @@ async function openArticle(id, el) {
 }
 
 // ---------- topics CRUD ----------
+function renderFieldsBar(fields) {
+  const bar = $('#fields-bar');
+  const chips = fields.length
+    ? fields.map(f => `<span class="pack-chip active" style="cursor:default">${f}</span>`).join('')
+    : '<span style="color:var(--muted); font-size:12px;">No fields set — the AI infers the field per paper.</span>';
+  bar.innerHTML = `<span class="pack-chips-label">Fields</span> ${chips}
+    <button class="ghost" id="edit-fields-btn" style="padding:3px 10px; font-size:12px;">Edit fields</button>`;
+  $('#edit-fields-btn').onclick = editFields;
+}
+
+async function editFields() {
+  const r = await api('/api/fields');
+  const selected = new Set(r.selected || []);
+  showModal(`
+    <h3>Your field(s) of practice</h3>
+    <p style="color:var(--muted); font-size:13px;">These scope how the AI classifies new
+      papers and what topics it proposes.</p>
+    <div id="modal-field-list" style="max-height:50vh; overflow-y:auto; margin:10px 0;"></div>
+    <div class="actions">
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+      <button id="fields-save">Save</button>
+    </div>
+  `);
+  renderFieldChecklist($('#modal-field-list'), r.available || [], selected);
+  $('#fields-save').onclick = async () => {
+    try {
+      await api('/api/library/fields', { method: 'PUT', body: { fields: Array.from(selected) } });
+      closeModal(); toast('Fields updated'); loadTopics();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
 async function loadTopics() {
   await loadAvailablePacks();
   const r = await api('/api/topics');
+  renderFieldsBar(r.fields || []);
   const list = $('#topics-list');
   list.innerHTML = '';
   Object.entries(r.topics).sort().forEach(([name, meta]) => {
@@ -926,6 +1260,7 @@ async function editArticle(a) {
       </select></div>
       <div><label style="font-size:11px;color:var(--muted)">TAGS</label><input id="ea-tags" value="${(a.tags || '').replace(/"/g, '&quot;')}"></div>
       <div style="grid-column:1/-1"><label style="font-size:11px;color:var(--muted)">ABSTRACT</label><textarea id="ea-abstract" rows="4">${a.abstract || ''}</textarea></div>
+      <div style="grid-column:1/-1"><label style="font-size:11px;color:var(--muted)">SUMMARY (AI)</label><textarea id="ea-summary" rows="2">${a.summary || ''}</textarea></div>
     </div>
     <div class="actions">
       <button class="ghost" onclick="closeModal()">Cancel</button>
@@ -941,6 +1276,7 @@ async function editArticle(a) {
       doi: $('#ea-doi').value.trim() || null,
       topic: $('#ea-topic').value,
       abstract: $('#ea-abstract').value.trim() || null,
+      summary: $('#ea-summary').value.trim() || null,
       tags: $('#ea-tags').value.trim() || null,
     };
     try {
@@ -963,10 +1299,58 @@ async function resetToolsView() {
   $('#update-status').textContent = '';
   $('#apply-update-btn').style.display = 'none';
   try {
+    const cfg = await api('/api/config');
+    $('#tools-lib-path').textContent = (cfg.config && cfg.config.library_path) || '—';
+  } catch {}
+  try {
     const v = await api('/api/app/version');
     $('#current-version').textContent = `v${v.version}`;
   } catch { $('#current-version').textContent = '?'; }
+  try {
+    const s = await api('/api/llm/settings');
+    $('#llm-enabled').checked = s.enabled;
+    $('#llm-model').value = s.model || '';
+    $('#llm-key').value = '';
+    $('#llm-key').placeholder = s.has_key
+      ? '•••••• (your key saved — leave blank to keep)' : 'gsk_… (optional, overrides shared key)';
+    $('#llm-status').textContent = !s.enabled ? 'Disabled'
+      : s.has_key ? 'Enabled (your key)'
+      : s.using_builtin ? 'Enabled (shared key)'
+      : 'Enabled';
+  } catch {}
 }
+
+$('#llm-save-btn').addEventListener('click', async () => {
+  const body = {
+    enabled: $('#llm-enabled').checked,
+    model: $('#llm-model').value.trim() || 'llama-3.3-70b-versatile',
+    api_key: $('#llm-key').value.trim() || null,
+  };
+  try {
+    const r = await api('/api/llm/settings', { method: 'PUT', body });
+    $('#llm-key').value = '';
+    $('#llm-status').textContent = !r.enabled ? 'Disabled'
+      : r.has_key ? 'Enabled (your key)'
+      : r.using_builtin ? 'Enabled (shared key)'
+      : 'Enabled';
+    toast('AI settings saved');
+  } catch (e) { toast(e.message, true); }
+});
+
+$('#switch-library-btn').addEventListener('click', async () => {
+  let folder = null;
+  if (window.pywebview && window.pywebview.api) {
+    folder = await window.pywebview.api.pick_folder();
+  } else {
+    folder = prompt('Path to an existing Et al. library folder:');
+  }
+  if (!folder) return;
+  try {
+    const r = await api('/api/open_library', { method: 'POST', body: { path: folder } });
+    toast(`Opened library — ${r.article_count} articles`);
+    location.reload();
+  } catch (e) { toast(e.message, true); }
+});
 
 $('#refresh-meta-btn').addEventListener('click', async () => {
   const onlyMissing = $('#refresh-only-missing').checked;
@@ -1029,8 +1413,15 @@ $('#check-updates-btn').addEventListener('click', async () => {
       status.style.color = '#b34a2a';
       $('#apply-update-btn').style.display = 'none';
     } else if (r.updates_available) {
-      status.innerHTML = `New release: <strong>v${r.latest}</strong> (you have v${r.current}).`;
+      const notes = r.notes
+        ? `<div style="margin-top:8px;white-space:pre-wrap;max-height:180px;overflow:auto;border-left:2px solid var(--border);padding-left:10px;color:var(--text)">${r.notes.replace(/</g, '&lt;')}</div>`
+        : '';
+      status.innerHTML = `New release <strong>v${r.latest}</strong> available — you have v${r.current}. ` +
+        (r.release_url ? `<a href="#" id="view-release" style="color:var(--accent)">View on GitHub</a>` : '') +
+        notes;
       status.style.color = 'var(--accent)';
+      const vr = $('#view-release');
+      if (vr) vr.onclick = (e) => { e.preventDefault(); openExternalUrl(r.release_url); };
       $('#apply-update-btn').style.display = 'inline-block';
     } else if (!r.latest) {
       status.textContent = r.reason || `No releases published. You're on v${r.current}.`;

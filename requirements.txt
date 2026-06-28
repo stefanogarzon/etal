@@ -6,3 +6,8 @@ pypdf>=4.0
 PyYAML>=6.0
 python-multipart>=0.0.9
 pydantic>=2.5
+
+# Platform webview backends (so `pip install -r requirements.txt` works per-OS)
+pythonnet>=3.0 ; sys_platform == "win32"
+pyobjc-framework-Cocoa>=10 ; sys_platform == "darwin"
+pyobjc-framework-WebKit>=10 ; sys_platform == "darwin"
