@@ -76,7 +76,7 @@ input:focus, select:focus, textarea:focus {
 
 /* Setup screen */
 .setup { width: 100%; display: flex; align-items: center; justify-content: center;
-  flex-direction: column; gap: 16px; padding: 40px; }
+  flex-direction: column; gap: 16px; padding: 40px; overflow-y: auto; }
 .setup h1 { margin: 0; }
 .setup p { color: var(--muted); max-width: 500px; text-align: center; }
 .path-display { font-family: monospace; background: var(--panel);
@@ -237,7 +237,7 @@ input:focus, select:focus, textarea:focus {
         <p>Choose your field(s) of practice. The app uses these to auto-classify the
           papers you add — your topics grow organically as the library fills up.
           You can change this anytime in the Topics tab.</p>
-        <div id="field-list" style="text-align:left; max-width:580px; margin: 16px auto;"></div>
+        <div id="field-list" style="text-align:left; max-width:580px; margin: 16px auto; max-height:42vh; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:10px 12px;"></div>
         <button id="confirm-setup-btn">Initialize library</button>
       </div>
 
