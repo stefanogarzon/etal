@@ -47,7 +47,7 @@ from llm import (
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 
