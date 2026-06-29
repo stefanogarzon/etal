@@ -301,35 +301,57 @@ input:focus, select:focus, textarea:focus {
       </div>
       <button class="ghost" id="refresh-meta-btn" style="margin-top:8px">Refresh now</button>
 
-      <h3 style="margin-top:24px">Reclassify topics</h3>
-      <p style="color:var(--muted);font-size:13px">Re-run topic suggestion on every article. Preview the proposed moves before applying.</p>
+      <h3 style="margin-top:24px">Reclassify topics (keyword)</h3>
+      <p style="color:var(--muted);font-size:13px">Re-run the offline keyword matcher on every article. Preview the proposed moves before applying.</p>
       <div style="display:flex; gap:8px; margin-top:8px;">
         <button class="ghost" id="reclassify-preview-btn">Preview changes</button>
         <button class="ghost danger" id="reclassify-apply-btn" style="display:none">Apply changes</button>
       </div>
       <div id="reclassify-result" style="margin-top:12px"></div>
 
-      <h3 style="margin-top:24px">AI assist (Groq) — optional</h3>
-      <p style="color:var(--muted);font-size:13px">With a free Groq API key, Et al. suggests a topic for each paper (and can propose new ones) and writes short summaries. It's <strong>off until you add a key</strong>; without one, the app classifies by keywords. Topic suggestion uses <code>llama-3.3-70b</code>, summaries use the faster <code>llama-3.1-8b</code>; any failed call falls back to keyword matching.</p>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:4px"><strong>How to get a free key:</strong></p>
-      <ol style="color:var(--muted);font-size:13px;margin-top:0;padding-left:20px;line-height:1.6">
-        <li>Open <a href="#" id="groq-console-link" style="color:var(--accent)">console.groq.com/keys</a> and sign in (free, no credit card).</li>
-        <li>Click <strong>Create API Key</strong>, give it a name, and create it.</li>
-        <li>Copy the key (it starts with <code>gsk_</code>) — you only see it once.</li>
-        <li>Paste it below, tick <strong>Enable AI assist</strong>, and click Save.</li>
-      </ol>
-      <p style="color:var(--muted);font-size:12px">Your key is stored locally in <code>config.json</code> and is only ever sent to Groq.</p>
-      <div style="display:flex; flex-direction:column; gap:8px; max-width:520px; margin-top:8px;">
+      <h3 style="margin-top:24px">Reclassify with AI</h3>
+      <p style="color:var(--muted);font-size:13px">Re-run AI classification over articles already in the library — handy after a bulk import that hit a free-tier limit and left papers in <code>_uncategorized</code>. Runs in the background, paced to your Requests/min, retrying on rate-limit. Review the proposed moves, then apply.</p>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+        <select id="reclass-ai-scope">
+          <option value="uncategorized">Only _uncategorized</option>
+          <option value="all">All articles</option>
+        </select>
+        <button class="ghost" id="reclass-ai-start">Start</button>
+        <button class="ghost" id="reclass-ai-cancel" style="display:none">Cancel</button>
+      </div>
+      <div id="reclass-ai-result" style="margin-top:12px"></div>
+
+      <h3 style="margin-top:24px">AI assist — optional</h3>
+      <p style="color:var(--muted);font-size:13px">With an API key, Et al. suggests a topic for each paper (and can propose new ones) and writes short summaries. It's <strong>off until you add a key</strong>; without one, the app classifies by keywords. Works with any <strong>OpenAI-compatible</strong> provider — Groq, Google Gemini (free), a local Ollama, OpenRouter, … Any failed call falls back to keyword matching.</p>
+      <div style="display:flex; flex-direction:column; gap:8px; max-width:540px; margin-top:8px;">
         <label style="text-transform:none;letter-spacing:0;font-size:13px;display:flex;align-items:center;gap:6px;">
           <input type="checkbox" id="llm-enabled" style="width:auto"> Enable AI assist
         </label>
         <div>
-          <label style="font-size:11px;color:var(--muted)">GROQ API KEY</label>
-          <input type="password" id="llm-key" placeholder="gsk_…  (leave blank to keep current)">
+          <label style="font-size:11px;color:var(--muted)">PROVIDER</label>
+          <select id="llm-provider">
+            <option value="gemini">Google Gemini (free tier)</option>
+            <option value="groq">Groq (free tier)</option>
+            <option value="ollama">Ollama (local, free)</option>
+            <option value="custom">Custom (OpenAI-compatible)</option>
+          </select>
+        </div>
+        <div id="llm-help" style="font-size:12px;color:var(--muted);line-height:1.5"></div>
+        <div>
+          <label style="font-size:11px;color:var(--muted)">API KEY</label>
+          <input type="password" id="llm-key" placeholder="paste your key (leave blank to keep current)">
         </div>
         <div>
           <label style="font-size:11px;color:var(--muted)">MODEL</label>
-          <input type="text" id="llm-model" placeholder="llama-3.3-70b-versatile">
+          <input type="text" id="llm-model" placeholder="model id">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted)">API BASE URL</label>
+          <input type="text" id="llm-base" placeholder="https://…/v1">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted)">REQUESTS / MIN — paces batch jobs to fit free-tier limits (0 = no cap; Gemini free ≈ 15)</label>
+          <input type="number" id="llm-rpm" min="0" placeholder="15">
         </div>
         <div><button class="ghost" id="llm-save-btn">Save AI settings</button>
           <span id="llm-status" style="margin-left:10px;color:var(--muted);font-size:12px"></span></div>
@@ -641,7 +663,8 @@ function renderStaged(s) {
   if (ai.error === 'rate_limited') {
     aiHint = `<div style="font-size:11px;color:#8b6500;margin-top:4px">⚠ AI rate-limited — using keyword match. Try again shortly, or add your own key in Tools.</div>`;
   } else if (ai.error) {
-    aiHint = `<div style="font-size:11px;color:#8b6500;margin-top:4px">⚠ AI unavailable — using keyword match.</div>`;
+    const det = ai.error_detail ? ` (${ai.error_detail.replace(/</g, '&lt;')})` : '';
+    aiHint = `<div style="font-size:11px;color:#8b6500;margin-top:4px">⚠ AI unavailable${det} — using keyword match. Check the model/key in Tools.</div>`;
   } else if (ai.enabled && ai.topic) {
     aiHint = `<div style="font-size:11px;color:var(--accent);margin-top:4px">AI suggests <strong>${ai.topic}</strong>${ai.is_new ? ' <em>(new topic)</em>' : ''}${ai.reason ? ' — ' + ai.reason : ''}</div>`;
   } else if (!ai.enabled) {
@@ -1318,9 +1341,13 @@ async function resetToolsView() {
     const s = await api('/api/llm/settings');
     $('#llm-enabled').checked = s.enabled;
     $('#llm-model').value = s.model || '';
+    $('#llm-base').value = s.base_url || '';
+    $('#llm-rpm').value = s.rpm || '';
     $('#llm-key').value = '';
     $('#llm-key').placeholder = s.has_key
-      ? '•••••• (your key saved — leave blank to keep)' : 'gsk_… (paste your Groq key)';
+      ? '•••••• (saved — leave blank to keep)' : 'paste your key';
+    $('#llm-provider').value = llmProviderFromBase(s.base_url);
+    renderLlmHelp();
     $('#llm-status').textContent = !s.enabled ? 'Disabled'
       : s.has_key ? 'Enabled (your key)'
       : s.using_builtin ? 'Enabled (shared key)'
@@ -1328,9 +1355,41 @@ async function resetToolsView() {
   } catch {}
 }
 
-$('#groq-console-link').addEventListener('click', (e) => {
-  e.preventDefault();
-  openExternalUrl('https://console.groq.com/keys');
+const LLM_PRESETS = {
+  gemini: { base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-flash-lite-latest', rpm: 15,
+    help: 'Free key at <a href="#" class="llm-link" data-url="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> (Google AI Studio → Create API key). The free tier has a low daily request cap (~200/day) — fine for day-to-day use; for a big backlog, enable billing (cents) or use Ollama.' },
+  groq: { base: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', rpm: 0,
+    help: 'Free key at <a href="#" class="llm-link" data-url="https://console.groq.com/keys">console.groq.com/keys</a>. Fast, but the free tier has a low daily token cap (rough for big batches).' },
+  ollama: { base: 'http://localhost:11434/v1', model: 'qwen2.5:7b', rpm: 0,
+    help: 'Runs locally — free & unlimited. Install <a href="#" class="llm-link" data-url="https://ollama.com">Ollama</a>, then run <code>ollama pull qwen2.5:7b</code>. No real key needed — type anything (e.g. "ollama") in the key field.' },
+  custom: { base: '', model: '', rpm: 0,
+    help: 'Any OpenAI-compatible endpoint: set the base URL (usually ending in <code>/v1</code>), the model id, and your key.' },
+};
+
+function llmProviderFromBase(base) {
+  const b = (base || '').toLowerCase();
+  if (b.includes('groq.com')) return 'groq';
+  if (b.includes('generativelanguage.googleapis')) return 'gemini';
+  if (b.includes('11434') || b.includes('localhost') || b.includes('127.0.0.1')) return 'ollama';
+  return b ? 'custom' : 'gemini';
+}
+
+function renderLlmHelp() {
+  const p = LLM_PRESETS[$('#llm-provider').value] || LLM_PRESETS.custom;
+  const help = $('#llm-help');
+  help.innerHTML = p.help;
+  help.querySelectorAll('.llm-link').forEach(a =>
+    a.onclick = (e) => { e.preventDefault(); openExternalUrl(a.dataset.url); });
+}
+
+$('#llm-provider').addEventListener('change', () => {
+  const p = LLM_PRESETS[$('#llm-provider').value];
+  if (p) {
+    if (p.base) $('#llm-base').value = p.base;
+    if (p.model) $('#llm-model').value = p.model;
+    $('#llm-rpm').value = p.rpm || '';
+  }
+  renderLlmHelp();
 });
 // Pasting a key implies you want AI on.
 $('#llm-key').addEventListener('input', () => {
@@ -1341,6 +1400,8 @@ $('#llm-save-btn').addEventListener('click', async () => {
   const body = {
     enabled: $('#llm-enabled').checked || !!$('#llm-key').value.trim(),
     model: $('#llm-model').value.trim() || 'llama-3.3-70b-versatile',
+    base_url: $('#llm-base').value.trim() || null,
+    rpm: parseInt($('#llm-rpm').value) || 0,
     api_key: $('#llm-key').value.trim() || null,
   };
   try {
@@ -1418,6 +1479,81 @@ $('#reclassify-apply-btn').addEventListener('click', async () => {
   } catch (e) { toast(e.message, true); }
   btn.disabled = false; btn.textContent = 'Apply changes';
 });
+
+// ---------- AI reclassify (background) ----------
+let reclassAiJob = null;
+let reclassAiTimer = null;
+
+$('#reclass-ai-start').addEventListener('click', async () => {
+  const scope = $('#reclass-ai-scope').value;
+  try {
+    const r = await api('/api/reclassify_ai/start', { method: 'POST', body: { scope } });
+    reclassAiJob = r.job_id;
+    $('#reclass-ai-start').style.display = 'none';
+    $('#reclass-ai-cancel').style.display = 'inline-block';
+    if (reclassAiTimer) clearInterval(reclassAiTimer);
+    pollReclassAi();
+    reclassAiTimer = setInterval(pollReclassAi, 1500);
+  } catch (e) { toast(e.message, true); }
+});
+
+$('#reclass-ai-cancel').addEventListener('click', async () => {
+  if (reclassAiJob) { try { await api(`/api/reclassify_ai/cancel/${reclassAiJob}`, { method: 'POST', body: {} }); } catch {} }
+});
+
+async function pollReclassAi() {
+  if (!reclassAiJob) return;
+  let s;
+  try { s = await api(`/api/reclassify_ai/status/${reclassAiJob}`); }
+  catch { clearInterval(reclassAiTimer); reclassAiTimer = null; return; }
+  renderReclassAi(s);
+  if (s.done) { clearInterval(reclassAiTimer); reclassAiTimer = null; $('#reclass-ai-cancel').style.display = 'none'; $('#reclass-ai-start').style.display = 'inline-block'; }
+}
+
+function renderReclassAi(s) {
+  const out = $('#reclass-ai-result');
+  const pct = s.total ? Math.round(100 * s.processed / s.total) : 0;
+  const wait = s.waiting ? ' · <span style="color:#8b6500">rate-limited, waiting…</span>' : '';
+  const err = s.error === 'auth' ? '<div style="color:#b34a2a">Auth failed — check your API key in AI assist.</div>' : '';
+  let head = `<div>${s.done ? 'Done' : 'Classifying'} ${s.processed}/${s.total}${wait} · ${s.changes.length} proposed move(s)</div>${err}
+    <div style="width:100%;height:5px;background:var(--border);border-radius:3px;margin-top:6px;overflow:hidden"><div style="height:100%;background:var(--accent);width:${pct}%"></div></div>`;
+  if (!s.done) { out.innerHTML = head; return; }
+  if (!s.changes.length) { out.innerHTML = head + '<p style="color:var(--muted)">No moves proposed.</p>'; return; }
+  const rows = s.changes.map(c => `
+    <tr data-id="${c.id}" style="border-top:1px solid var(--border)">
+      <td style="padding:6px"><input type="checkbox" class="rc-cb" checked style="width:auto"></td>
+      <td style="padding:6px;max-width:340px">${(c.title || '').replace(/</g, '&lt;')}</td>
+      <td style="padding:6px;color:var(--muted)">${c.from_topic}</td>
+      <td style="padding:6px"><strong>${c.to_topic}</strong>${c.is_new ? ' <em style="color:var(--muted)">(new)</em>' : ''}</td>
+    </tr>`).join('');
+  out.innerHTML = head + `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
+      <strong>${s.changes.length} proposed move(s)</strong>
+      <button id="reclass-ai-apply">Apply selected</button>
+    </div>
+    <div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="position:sticky;top:0;background:var(--panel);text-align:left">
+          <th style="padding:6px"></th><th style="padding:6px">Title</th><th style="padding:6px">From</th><th style="padding:6px">To</th>
+        </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  $('#reclass-ai-apply').onclick = applyReclassAi;
+}
+
+async function applyReclassAi() {
+  const ids = [];
+  $('#reclass-ai-result').querySelectorAll('tr[data-id]').forEach(tr => {
+    if (tr.querySelector('.rc-cb').checked) ids.push(Number(tr.dataset.id));
+  });
+  if (!ids.length) { toast('Nothing selected', true); return; }
+  const btn = $('#reclass-ai-apply'); btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await api('/api/reclassify_ai/apply', { method: 'POST', body: { job_id: reclassAiJob, ids } });
+    toast(`Moved ${r.applied} article${r.applied !== 1 ? 's' : ''}`);
+    $('#reclass-ai-result').innerHTML = ''; reclassAiJob = null;
+    loadTopicsForFilter();
+  } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Apply selected'; }
+}
 
 $('#check-updates-btn').addEventListener('click', async () => {
   const status = $('#update-status');
