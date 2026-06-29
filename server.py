@@ -39,15 +39,15 @@ from pydantic import BaseModel
 from pypdf import PdfReader
 
 from llm import (
-    BUILTIN_ENABLED, BUILTIN_KEY, DEFAULT_MODEL, LLMError, llm_enabled,
-    suggest_topic_llm, summarize_text,
+    BUILTIN_ENABLED, BUILTIN_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL, LLMError,
+    llm_enabled, suggest_topic_llm, summarize_text,
 )
 
 # ---------------------------------------------------------------------------
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 
@@ -764,6 +764,17 @@ class LLMSettings(BaseModel):
     enabled: bool = False
     api_key: str | None = None
     model: str = DEFAULT_MODEL
+    base_url: str | None = None      # OpenAI-compatible endpoint base
+    rpm: int | None = None           # requests/min cap for batch jobs (free tiers)
+
+
+class ReclassifyAIStartRequest(BaseModel):
+    scope: str = "uncategorized"     # 'uncategorized' | 'all'
+
+
+class ReclassifyAIApplyRequest(BaseModel):
+    job_id: str
+    ids: list[int]
 
 
 class SummarizeRequest(BaseModel):
@@ -1793,6 +1804,153 @@ def post_bulk_import(req: BulkImportRequest) -> dict:
             "failed": failed}
 
 
+# ----- Routes: AI reclassify (existing articles) -----
+#
+# Re-runs AI topic suggestion over already-saved articles (e.g. the
+# _uncategorized overflow left by a bulk import that hit a free-tier limit).
+# Background job, paced to the provider's requests/min, retrying on rate-limit
+# so a slow free-tier run still finishes.
+
+_reclass_jobs: dict[str, dict] = {}
+
+
+def _reclass_set_waiting(job_id: str, val: bool) -> None:
+    with _bulk_lock:
+        if job_id in _reclass_jobs:
+            _reclass_jobs[job_id]["waiting"] = val
+
+
+def _reclass_worker(job_id: str, rows: list[dict]) -> None:
+    cfg = load_config()
+    topics_map = load_topics()
+    fields = load_fields()
+    rpm = int(((cfg or {}).get("llm") or {}).get("rpm") or 0)
+    interval = (60.0 / rpm) if rpm > 0 else 0.3
+
+    for i, row in enumerate(rows):
+        with _bulk_lock:
+            if _reclass_jobs[job_id].get("cancelled"):
+                break
+        title = row.get("title") or ""
+        abstract = row.get("abstract") or ""
+        proposed = None
+        abort = False
+        for attempt in range(6):
+            ai = suggest_topic_llm(cfg, title, abstract, "", topics_map, fields=fields)
+            if ai and ai.get("error"):
+                reason = ai["error"]
+                if reason == "rate_limited" and attempt < 5:
+                    _reclass_set_waiting(job_id, True)
+                    time.sleep(min(15 * (attempt + 1), 60))
+                    _reclass_set_waiting(job_id, False)
+                    continue
+                if reason == "auth":
+                    with _bulk_lock:
+                        _reclass_jobs[job_id]["error"] = "auth"
+                    abort = True
+                break
+            proposed = ai
+            break
+        if abort:
+            break
+        if proposed and proposed.get("topic"):
+            to_topic = proposed["topic"]
+            if proposed.get("is_new"):
+                to_topic = sanitize_topic(to_topic)
+            if to_topic and to_topic != "_uncategorized" and to_topic != row["topic"]:
+                with _bulk_lock:
+                    _reclass_jobs[job_id]["changes"].append({
+                        "id": row["id"], "title": title,
+                        "from_topic": row["topic"], "to_topic": to_topic,
+                        "is_new": bool(proposed.get("is_new")),
+                    })
+        with _bulk_lock:
+            _reclass_jobs[job_id]["processed"] = i + 1
+        time.sleep(interval)
+
+    with _bulk_lock:
+        _reclass_jobs[job_id]["done"] = True
+
+
+@app.post("/api/reclassify_ai/start")
+def post_reclassify_ai_start(req: ReclassifyAIStartRequest) -> dict:
+    if not llm_enabled(load_config()):
+        raise HTTPException(400, "AI is off — add a key in Tools first")
+    where = "" if req.scope == "all" else "WHERE topic = '_uncategorized'"
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, title, abstract, topic FROM articles {where} ORDER BY id"
+        ).fetchall()]
+    if not rows:
+        raise HTTPException(400, "No matching articles to reclassify")
+    job_id = uuid.uuid4().hex[:12]
+    with _bulk_lock:
+        _reclass_jobs[job_id] = {
+            "id": job_id, "total": len(rows), "processed": 0, "done": False,
+            "cancelled": False, "waiting": False, "error": None, "changes": [],
+        }
+    threading.Thread(target=_reclass_worker, args=(job_id, rows), daemon=True).start()
+    return {"job_id": job_id, "total": len(rows)}
+
+
+@app.get("/api/reclassify_ai/status/{job_id}")
+def get_reclassify_ai_status(job_id: str) -> dict:
+    with _bulk_lock:
+        job = _reclass_jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        return {
+            "id": job["id"], "total": job["total"], "processed": job["processed"],
+            "done": job["done"], "waiting": job["waiting"], "error": job["error"],
+            "changes": list(job["changes"]),
+        }
+
+
+@app.post("/api/reclassify_ai/cancel/{job_id}")
+def post_reclassify_ai_cancel(job_id: str) -> dict:
+    with _bulk_lock:
+        if job_id in _reclass_jobs:
+            _reclass_jobs[job_id]["cancelled"] = True
+    return {"ok": True}
+
+
+@app.post("/api/reclassify_ai/apply")
+def post_reclassify_ai_apply(req: ReclassifyAIApplyRequest) -> dict:
+    with _bulk_lock:
+        job = _reclass_jobs.get(req.job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        by_id = {c["id"]: c for c in job["changes"]}
+    root = library_root()
+    applied = 0
+    for cid in req.ids:
+        change = by_id.get(cid)
+        if not change:
+            continue
+        with db() as conn:
+            row = conn.execute("SELECT topic, filename FROM articles WHERE id = ?",
+                               (cid,)).fetchone()
+        if not row:
+            continue
+        to_topic = sanitize_topic(change["to_topic"])
+        register_topic_if_new(to_topic)
+        new_dir = root / to_topic
+        new_dir.mkdir(exist_ok=True)
+        old_path = root / row["topic"] / row["filename"]
+        new_path = unique_path(new_dir, row["filename"])
+        if old_path.exists():
+            shutil.move(str(old_path), str(new_path))
+        with db() as conn:
+            conn.execute("UPDATE articles SET topic = ?, filename = ? WHERE id = ?",
+                         (to_topic, new_path.name, cid))
+        applied += 1
+    if applied:
+        regenerate_library_md()
+    with _bulk_lock:
+        _reclass_jobs.pop(req.job_id, None)
+    return {"ok": True, "applied": applied}
+
+
 # ----- Routes: AI (Groq) -----
 
 @app.get("/api/llm/settings")
@@ -1805,6 +1963,8 @@ def get_llm_settings() -> dict:
     return {
         "enabled": enabled and (user_key or bool(BUILTIN_KEY)),
         "model": llm.get("model") or DEFAULT_MODEL,
+        "base_url": llm.get("base_url") or DEFAULT_BASE_URL,
+        "rpm": llm.get("rpm") or 0,
         "has_key": user_key,
         "using_builtin": enabled and not user_key and bool(BUILTIN_KEY),
         "builtin_available": bool(BUILTIN_KEY),
@@ -1819,11 +1979,14 @@ def put_llm_settings(req: LLMSettings) -> dict:
     llm = cfg.get("llm") or {}
     llm["enabled"] = req.enabled
     llm["model"] = req.model or DEFAULT_MODEL
+    llm["base_url"] = (req.base_url or DEFAULT_BASE_URL).strip()
+    llm["rpm"] = int(req.rpm) if req.rpm and req.rpm > 0 else 0
     if req.api_key:  # only overwrite when a fresh key is supplied
         llm["api_key"] = req.api_key.strip()
     cfg["llm"] = llm
     save_config(cfg)
     return {"ok": True, "enabled": llm["enabled"], "model": llm["model"],
+            "base_url": llm["base_url"], "rpm": llm["rpm"],
             "has_key": bool(llm.get("api_key")),
             "using_builtin": llm["enabled"] and not llm.get("api_key") and bool(BUILTIN_KEY)}
 

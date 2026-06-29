@@ -23,12 +23,11 @@ import httpx
 
 logger = logging.getLogger("etal.llm")
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Classification needs semantic reasoning → the bigger model.
+# Default provider is Groq, but any OpenAI-compatible endpoint works (Groq,
+# Google Gemini's OpenAI layer, a local Ollama, OpenRouter, …). The base URL is
+# configurable in Tools; we append "/chat/completions".
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
-# Summaries are cheap/forgiving → a smaller, faster, fewer-tokens model,
-# to ease the shared free-tier rate limit.
-SUMMARY_MODEL = "llama-3.1-8b-instant"
 
 
 class LLMError(Exception):
@@ -96,6 +95,7 @@ def _llm_cfg(cfg: dict | None) -> dict | None:
         return None
     llm["api_key"] = key
     llm["model"] = llm.get("model") or DEFAULT_MODEL
+    llm["base_url"] = (llm.get("base_url") or DEFAULT_BASE_URL).strip()
     return llm
 
 
@@ -118,10 +118,11 @@ def _chat(
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    url = (llm.get("base_url") or DEFAULT_BASE_URL).rstrip("/") + "/chat/completions"
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             r = client.post(
-                GROQ_URL,
+                url,
                 json=body,
                 headers={
                     "Authorization": f"Bearer {llm['api_key']}",
@@ -131,10 +132,10 @@ def _chat(
                 },
             )
     except Exception as e:  # network / timeout
-        logger.warning("Groq call failed: %s", e)
+        logger.warning("LLM call failed (%s): %s", url, e)
         raise LLMError("network", str(e)) from e
     if r.status_code != 200:
-        logger.warning("Groq %s: %s", r.status_code, r.text[:300])
+        logger.warning("LLM %s: %s", r.status_code, r.text[:300])
         raise LLMError(_http_reason(r.status_code), f"HTTP {r.status_code}")
     try:
         return (r.json()["choices"][0]["message"]["content"] or "").strip()
@@ -258,10 +259,10 @@ def suggest_topic_llm(
 
 
 def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
-    """Write a faithful 2-3 sentence plain-language summary, using the smaller
-    SUMMARY_MODEL. Returns ``None`` when AI is off or there's nothing to
-    summarize; raises ``LLMError`` on a failed call (user-initiated action, so
-    the caller surfaces the reason)."""
+    """Write a faithful 2-3 sentence plain-language summary using the configured
+    model. Returns ``None`` when AI is off or there's nothing to summarize;
+    raises ``LLMError`` on a failed call (user-initiated action, so the caller
+    surfaces the reason)."""
     llm = _llm_cfg(cfg)
     if not llm or not (text or "").strip():
         return None
@@ -287,5 +288,4 @@ def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
             },
         ],
         max_tokens=300,
-        model=SUMMARY_MODEL,
     )
