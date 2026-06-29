@@ -351,7 +351,7 @@ input:focus, select:focus, textarea:focus {
         </div>
         <div>
           <label style="font-size:11px;color:var(--muted)">REQUESTS / MIN — paces batch jobs to fit free-tier limits (0 = no cap; Gemini free ≈ 15)</label>
-          <input type="number" id="llm-rpm" min="0" placeholder="15">
+          <input type="number" id="llm-rpm" min="0" placeholder="0 = no cap">
         </div>
         <div><button class="ghost" id="llm-save-btn">Save AI settings</button>
           <span id="llm-status" style="margin-left:10px;color:var(--muted);font-size:12px"></span></div>
@@ -1342,7 +1342,7 @@ async function resetToolsView() {
     $('#llm-enabled').checked = s.enabled;
     $('#llm-model').value = s.model || '';
     $('#llm-base').value = s.base_url || '';
-    $('#llm-rpm').value = s.rpm || '';
+    $('#llm-rpm').value = (s.rpm ?? '');   // keep 0 as "0" (0 is falsy)
     $('#llm-key').value = '';
     $('#llm-key').placeholder = s.has_key
       ? '•••••• (saved — leave blank to keep)' : 'paste your key';

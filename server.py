@@ -41,14 +41,14 @@ from pypdf import PdfReader
 
 from llm import (
     BUILTIN_ENABLED, BUILTIN_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL, LLMError,
-    llm_enabled, suggest_topic_llm, summarize_text,
+    extract_abstract_llm, llm_enabled, suggest_topic_llm, summarize_text,
 )
 
 # ---------------------------------------------------------------------------
 # Paths & config
 # ---------------------------------------------------------------------------
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 GITHUB_REPO = "stefanogarzon/etal"  # owner/repo for self-update checks
 
 
@@ -1025,9 +1025,14 @@ async def post_ingest(file: UploadFile = File(...)) -> dict:
         meta = cr
         source = "crossref"
 
-    # If no abstract from CrossRef, try a heuristic on the PDF text
+    # No abstract from CrossRef → reconstruct one with AI (best for two-column
+    # PDFs whose text extraction is scrambled), falling back to the regex heuristic.
     if not meta.get("abstract"):
-        meta["abstract"] = extract_abstract_heuristic(text)
+        ai_abs = extract_abstract_llm(
+            load_config(), meta.get("title", ""),
+            extract_first_pages_text(temp_path, n=4),
+        )
+        meta["abstract"] = ai_abs or extract_abstract_heuristic(text)
 
     # Check duplicate
     duplicate = False
@@ -1094,8 +1099,8 @@ def post_extract_abstract(temp_id: str) -> dict:
     path = STAGING / temp_id
     if not path.exists():
         raise HTTPException(404, "Staged file not found")
-    text = extract_first_pages_text(path, n=3)
-    abstract = extract_abstract_heuristic(text)
+    text = extract_first_pages_text(path, n=4)
+    abstract = extract_abstract_llm(load_config(), "", text) or extract_abstract_heuristic(text)
     return {"abstract": abstract, "text_chars": len(text)}
 
 

@@ -297,3 +297,44 @@ def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
         ],
         max_tokens=300,
     )
+
+
+def extract_abstract_llm(cfg: dict | None, title: str, text: str) -> str | None:
+    """Reconstruct a clean abstract from raw first-page text (often scrambled by
+    two-column PDFs, or absent from CrossRef). Returns clean prose, or ``None``
+    when AI is off / the call fails — the caller then falls back to the regex
+    heuristic. Passive path: never raises."""
+    llm = _llm_cfg(cfg)
+    if not llm or not (text or "").strip():
+        return None
+    try:
+        out = _chat(
+            llm,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You recover the ABSTRACT of a research paper from raw "
+                        "text extracted from its first pages, which is often "
+                        "scrambled by a two-column PDF layout. Return the "
+                        "abstract as clean, correctly-ordered prose (keep its "
+                        "Background/Methods/Results/Conclusions structure if "
+                        "present). Use ONLY content in the text — never invent "
+                        "numbers or results. If there is no distinct abstract, "
+                        "write a faithful 4-6 sentence structured summary of the "
+                        "study's background, objective, methods, and findings "
+                        "from what's in the text. Return only the abstract text, "
+                        "no preamble or headings like 'Abstract:'."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Title: {title}\n\nRaw first-page text:\n{text[:8000]}",
+                },
+            ],
+            max_tokens=600,
+        )
+        return (out or "").strip() or None
+    except LLMError as e:
+        logger.warning("AI abstract extraction failed: %s", e)
+        return None
