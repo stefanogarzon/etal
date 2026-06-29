@@ -23,12 +23,11 @@ import httpx
 
 logger = logging.getLogger("etal.llm")
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Classification needs semantic reasoning → the bigger model.
+# Default provider is Groq, but any OpenAI-compatible endpoint works (Groq,
+# Google Gemini's OpenAI layer, a local Ollama, OpenRouter, …). The base URL is
+# configurable in Tools; we append "/chat/completions".
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
-# Summaries are cheap/forgiving → a smaller, faster, fewer-tokens model,
-# to ease the shared free-tier rate limit.
-SUMMARY_MODEL = "llama-3.1-8b-instant"
 
 
 class LLMError(Exception):
@@ -96,6 +95,7 @@ def _llm_cfg(cfg: dict | None) -> dict | None:
         return None
     llm["api_key"] = key
     llm["model"] = llm.get("model") or DEFAULT_MODEL
+    llm["base_url"] = (llm.get("base_url") or DEFAULT_BASE_URL).strip()
     return llm
 
 
@@ -118,10 +118,11 @@ def _chat(
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    url = (llm.get("base_url") or DEFAULT_BASE_URL).rstrip("/") + "/chat/completions"
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             r = client.post(
-                GROQ_URL,
+                url,
                 json=body,
                 headers={
                     "Authorization": f"Bearer {llm['api_key']}",
@@ -131,11 +132,16 @@ def _chat(
                 },
             )
     except Exception as e:  # network / timeout
-        logger.warning("Groq call failed: %s", e)
+        logger.warning("LLM call failed (%s): %s", url, e)
         raise LLMError("network", str(e)) from e
     if r.status_code != 200:
-        logger.warning("Groq %s: %s", r.status_code, r.text[:300])
-        raise LLMError(_http_reason(r.status_code), f"HTTP {r.status_code}")
+        detail = r.text[:300]
+        try:
+            detail = (r.json().get("error") or {}).get("message") or detail
+        except Exception:
+            pass
+        logger.warning("LLM %s: %s", r.status_code, detail[:300])
+        raise LLMError(_http_reason(r.status_code), f"HTTP {r.status_code}: {detail[:200]}")
     try:
         return (r.json()["choices"][0]["message"]["content"] or "").strip()
     except Exception as e:  # malformed response
@@ -229,9 +235,10 @@ def suggest_topic_llm(
             max_tokens=200,
         )
     except LLMError as e:
-        # Passive path: never fail ingestion. Report the reason so the UI can
-        # warn (e.g. rate-limited) while the caller falls back to keywords.
-        return {"error": e.reason}
+        # Passive path: never fail ingestion. Report the reason + detail so the
+        # UI can warn (e.g. rate-limited / model not found) while the caller
+        # falls back to keywords.
+        return {"error": e.reason, "error_detail": str(e)}
     if not out:
         return None
     try:
@@ -258,10 +265,10 @@ def suggest_topic_llm(
 
 
 def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
-    """Write a faithful 2-3 sentence plain-language summary, using the smaller
-    SUMMARY_MODEL. Returns ``None`` when AI is off or there's nothing to
-    summarize; raises ``LLMError`` on a failed call (user-initiated action, so
-    the caller surfaces the reason)."""
+    """Write a faithful 2-3 sentence plain-language summary using the configured
+    model. Returns ``None`` when AI is off or there's nothing to summarize;
+    raises ``LLMError`` on a failed call (user-initiated action, so the caller
+    surfaces the reason)."""
     llm = _llm_cfg(cfg)
     if not llm or not (text or "").strip():
         return None
@@ -272,12 +279,14 @@ def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
                 "role": "system",
                 "content": (
                     "You write concise, faithful 2-3 sentence plain-language "
-                    "summaries of biomedical papers. Summarize ONLY what the "
-                    "provided text explicitly states — never infer, add, or "
-                    "guess results, outcomes, or conclusions that are not "
-                    "present in the text. If the text does not report a result, "
-                    "do not state one. No invented numbers, no citations, no "
-                    "preamble — just the summary."
+                    "summaries of biomedical papers. Capture the study's "
+                    "objective, design, and main finding when they appear in "
+                    "the text. Summarize ONLY what the text states — never "
+                    "invent or guess results or numbers that are not present. "
+                    "If the text is only background/introduction with no "
+                    "results, summarize what the paper is about and its aim, "
+                    "and don't fabricate an outcome. No citations, no preamble "
+                    "— just the summary."
                 ),
             },
             {
@@ -287,5 +296,45 @@ def summarize_text(cfg: dict | None, title: str, text: str) -> str | None:
             },
         ],
         max_tokens=300,
-        model=SUMMARY_MODEL,
     )
+
+
+def extract_abstract_llm(cfg: dict | None, title: str, text: str) -> str | None:
+    """Reconstruct a clean abstract from raw first-page text (often scrambled by
+    two-column PDFs, or absent from CrossRef). Returns clean prose, or ``None``
+    when AI is off / the call fails — the caller then falls back to the regex
+    heuristic. Passive path: never raises."""
+    llm = _llm_cfg(cfg)
+    if not llm or not (text or "").strip():
+        return None
+    try:
+        out = _chat(
+            llm,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You recover the ABSTRACT of a research paper from raw "
+                        "text extracted from its first pages, which is often "
+                        "scrambled by a two-column PDF layout. Return the "
+                        "abstract as clean, correctly-ordered prose (keep its "
+                        "Background/Methods/Results/Conclusions structure if "
+                        "present). Use ONLY content in the text — never invent "
+                        "numbers or results. If there is no distinct abstract, "
+                        "write a faithful 4-6 sentence structured summary of the "
+                        "study's background, objective, methods, and findings "
+                        "from what's in the text. Return only the abstract text, "
+                        "no preamble or headings like 'Abstract:'."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Title: {title}\n\nRaw first-page text:\n{text[:8000]}",
+                },
+            ],
+            max_tokens=600,
+        )
+        return (out or "").strip() or None
+    except LLMError as e:
+        logger.warning("AI abstract extraction failed: %s", e)
+        return None

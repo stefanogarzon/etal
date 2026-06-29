@@ -60,22 +60,24 @@ The cloud service handles the actual syncing; Et al. just points at the folder.
 
 > ⚠️ **Don't run the app on two machines at the same time** (or before the sync finishes). The SQLite database can be corrupted by concurrent/mid-sync writes. Open it on one machine at a time and let the sync settle before switching.
 
-## AI assist (Groq) — optional
+## AI assist — optional
 
-Topic classification and summaries can use [Groq](https://groq.com)'s free tier. It's **off until you add a key**; without one, the app classifies by keywords.
+Topic classification and summaries can use any **OpenAI-compatible** LLM provider. It's **off until you add a key**; without one, the app classifies by keywords. In **Tools → AI assist**, pick a provider (it fills the endpoint + model), paste a key, tick **Enable**, **Save**:
 
-**Get a free key and turn it on:**
+| Provider | Cost | Notes |
+|---|---|---|
+| **Google Gemini** | Free tier | Generous limits — best for large batches. Key: [aistudio.google.com/apikey](https://aistudio.google.com/apikey), model `gemini-2.0-flash`. |
+| **Groq** | Free tier | Very fast, but a low daily token cap (rough for big batches). Key: [console.groq.com/keys](https://console.groq.com/keys). |
+| **Ollama** | Free, local | Runs on your machine, unlimited & private. Install [Ollama](https://ollama.com), `ollama pull qwen2.5:7b`; no key needed. |
+| **Custom** | — | Any OpenAI-compatible base URL (OpenRouter, Together, …). |
 
-1. Open [console.groq.com/keys](https://console.groq.com/keys) and sign in (free, no credit card).
-2. Click **Create API Key**, name it, and create it.
-3. Copy the key (starts with `gsk_`) — you only see it once.
-4. In the app: **Tools → AI assist**, paste the key, tick **Enable AI assist**, **Save**.
+- Your key is stored locally in `config.json` and is only ever sent to your chosen provider.
+- **Requests/min** paces batch jobs to fit free-tier limits (e.g. ~15 for Gemini free); jobs retry on rate-limit.
+- Any AI failure (offline, rate-limited, no key) silently falls back to keyword matching.
 
-- Your key is stored locally in `config.json` and is only ever sent to Groq.
-- Models: classification uses `llama-3.3-70b-versatile`; summaries use the faster `llama-3.1-8b-instant`.
-- Any AI failure (offline, rate-limited, no key) silently falls back to keyword matching — the app always works.
+### Bulk classification / fixing `_uncategorized`
 
-`_uncategorized` is reserved for papers outside your declared field(s); change your fields anytime in the Topics tab.
+For a big import that outran a free tier (papers landed in `_uncategorized`), use **Tools → Reclassify with AI** — a background job that re-runs AI over existing articles, paced to your Requests/min, then lets you review and apply the proposed moves. `_uncategorized` is reserved for papers outside your declared field(s); change your fields anytime in the Topics tab.
 
 ## Search syntax
 
